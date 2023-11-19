@@ -203,19 +203,25 @@ static int __init amba_init(void)
 }
 
 postcore_initcall(amba_init);
-
+extern void early_print(const char *str, ...);
 static int amba_get_enable_pclk(struct amba_device *pcdev)
 {
 	int ret;
 
 	pcdev->pclk = clk_get(&pcdev->dev, "apb_pclk");
 	if (IS_ERR(pcdev->pclk))
+	{
+		early_print("clk_get failed\n");
 		return PTR_ERR(pcdev->pclk);
+	}
 
 	ret = clk_prepare_enable(pcdev->pclk);
 	if (ret)
 		clk_put(pcdev->pclk);
-
+	else
+	{
+		early_print("clk_prepare_enable failed\n");
+	}
 	return ret;
 }
 
@@ -356,7 +362,8 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 
 	ret = request_resource(parent, &dev->res);
 	if (ret)
-		goto err_out;
+		{
+			early_print("amba_device_add: failed to request resources");goto err_out;}
 
 	/* Hard-coded primecell ID instead of plug-n-play */
 	if (dev->periphid != 0)
@@ -369,6 +376,7 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 	size = resource_size(&dev->res);
 	tmp = ioremap(dev->res.start, size);
 	if (!tmp) {
+		early_print("amba_device_add: ioremap failed");
 		ret = -ENOMEM;
 		goto err_release;
 	}
@@ -376,7 +384,7 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 	ret = amba_get_enable_pclk(dev);
 	if (ret == 0) {
 		u32 pid, cid;
-
+	
 		/*
 		 * Read pid and cid based on size of resource
 		 * they are located at end of region
@@ -396,7 +404,7 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 		if (!dev->periphid)
 			ret = -ENODEV;
 	}
-
+	early_print("amba_device_add: amba_get_enable_pclk failed\n");
 	iounmap(tmp);
 
 	if (ret)
@@ -412,13 +420,17 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 	if (ret == 0 && dev->irq[1])
 		ret = device_create_file(&dev->dev, &dev_attr_irq1);
 	if (ret == 0)
+	{
+		early_print("amba_device_add: OK\n");
 		return ret;
+	}
 
 	device_unregister(&dev->dev);
 
  err_release:
 	release_resource(&dev->res);
  err_out:
+ 	early_print("amba_device_add: failed\n");
 	return ret;
 }
 EXPORT_SYMBOL_GPL(amba_device_add);

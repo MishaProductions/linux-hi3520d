@@ -1,0 +1,184 @@
+menu "hi3520d board feature"
+
+config MACH_HI3520D
+	bool "Support hi3520d platform"
+	select CPU_V7
+	select ARM_GIC
+	select USE_OF
+	select COMMON_CLK
+	select ARM_APPENDED_DTB
+	help
+	  Include support for the hisilion hi3520d platform.
+
+config DEFAULT_BUSCLK
+	int "DEFAULT_BUSCLK"
+	default "50000000"
+	help
+	  Default AHB clock rate
+
+menuconfig HI_SATA
+	bool "hisilicon sata device support"
+	depends on (ARCH_GODBOX_V1 || ARCH_GODBOX || ARCH_GODNET || ARCH_GODARM || ARCH_HI3520D)
+	default y if (ARCH_GODBOX_V1 || ARCH_GODBOX  || ARCH_GODNET || ARCH_GODARM || ARCH_HI3520D)
+	select ATA
+	select ATA_VERBOSE_ERROR
+	select SATA_PMP
+#	select SATA_AHCI_PLATFORM
+	help
+	  This selects the hisilicon sata device.
+
+if HI_SATA
+
+
+config HI_SATA_IOBASE
+	hex "hi sata IO address"
+	default "0x60040000" if ARCH_GODBOX_V1
+	default "0x60040000" if ARCH_GODBOX
+	default "0x10080000" if (ARCH_GODNET || ARCH_GODARM || ARCH_HI3520D)
+
+config HI_SATA_IOSIZE
+	hex "hi sata IO size"
+	default "0x00010000"
+	help
+	  default is 0x10000.
+
+config HI_SATA_IRQNUM
+	int "hi sata irq number"
+	default "92" if ARCH_GODBOX_V1
+	default "92" if ARCH_GODBOX
+	default "68" if (ARCH_GODNET || ARCH_GODARM)
+	default "52" if ARCH_HI3520D
+
+config HI_SATA_PHY_CONFIG
+	hex "hi sata phy config for 1.5G"
+	default "0x0e262734" if (ARCH_GODBOX_V1 || ARCH_GODBOX)
+	default "0x0e262709" if (ARCH_GODNET || ARCH_GODARM)
+	default "0x0e276756" if (ARCH_HI3520D)
+	help
+	   default is 0x0e262709 when godnet and godarm.
+	   default is 0x0e276756 when hi3520d.
+
+config HI_SATA_PHYX_CTLH_VAL
+	hex "hi sata phy[0/1] ctlh value"
+	default "0x2121" if (ARCH_GODNET || ARCH_GODARM \
+		|| ARCH_GODBOX_V1 || ARCH_GODBOX)
+	default "0x2521" if (ARCH_HI3520D)
+	help
+	   default is 0x2121 when godnet and godarm.
+	   default is 0x2521 when hi3520d.
+
+config HI_SATA_PHY0_CTLL_3G_VAL
+	hex "hi sata phy0 global ctrl low val"
+	default "0x8a0ec888" if (ARCH_GODNET || ARCH_GODARM)
+	default "0x880ec888" if ARCH_HI3520D
+
+config HI_SATA_PHY0_CTLL_15G_VAL
+	hex "hi sata phy0 global ctrl low val"
+	default "0x8a0ec788" if (ARCH_GODNET || ARCH_GODARM)
+	default "0x880ec788" if ARCH_HI3520D
+
+config HI_SATA_3G_PHY_CONFIG
+	hex "hi sata phy config for 3G"
+	default "0x0e662753" if (ARCH_GODBOX_V1 || ARCH_GODBOX)
+	default "0x0e662709" if (ARCH_GODNET || ARCH_GODARM)
+	default "0x0e676756" if (ARCH_HI3520D)
+	help
+	   default is 0x0e662709 when godnet and godarm.
+	   default is 0x0e676756 when hi3520d.
+
+config HI_SATA_MODE
+	int "hi sata interworking speed mode(1.5G:0/3G:1)"
+	range 0 1
+	default "0" if ARCH_GODBOX_V1
+	default "0" if ARCH_GODBOX
+	default "0" if (ARCH_GODNET || ARCH_GODARM || ARCH_HI3520D)
+
+config HI_SATA_PORTS
+	int "hi sata port number"
+	default "2" if ARCH_GODBOX_V1
+	default "1" if ARCH_GODBOX
+	default "2" if (ARCH_GODNET || ARCH_GODARM || ARCH_HI3520D)
+
+endif # HI_SATA
+
+#
+# hiusb Host Controller Drivers
+#
+comment "hiusb Host Controller Drivers"
+	depends on USB
+
+menuconfig HIUSB_HOST
+	bool "hiusb(ehci/ohci) family usb host device support"
+	depends on (ARCH_GODBOX_V1)||(ARCH_GODEYES)||(ARCH_GODBOX)||(ARCH_GODNET)||(ARCH_PHOENIX)||(ARCH_GODARM)||(ARCH_HI3518 || ARCH_HI3520D)
+	default y if (ARCH_GODBOX_V1)||(ARCH_GODEYES)||(ARCH_GODBOX)||(ARCH_GODNET)||(ARCH_PHOENIX)||(ARCH_GODARM)||(ARCH_HI3518 || ARCH_HI3520D)
+	select USB
+	select USB_ARCH_HAS_EHCI
+#	select USB_EHCI_HCD
+	select USB_ARCH_HAS_OHCI
+#	select USB_OHCI_HCD
+	help
+	  This selects the usb(ehci/ohci) family usb host device.
+
+if HIUSB_HOST
+
+config HIUSB_EHCI
+	bool "hiusb-ehci usb host device support"
+	depends on (ARCH_GODBOX_V1)||(ARCH_GODEYES)||(ARCH_GODBOX)||(ARCH_GODNET)||(ARCH_PHOENIX)||(ARCH_GODARM)||(ARCH_HI3518 || ARCH_HI3520D)
+	default y if (ARCH_GODBOX_V1)||(ARCH_GODEYES)||(ARCH_GODBOX)||(ARCH_GODNET)||(ARCH_PHOENIX)||(ARCH_GODARM)||(ARCH_HI3518 || ARCH_HI3520D)
+
+config HIUSB_EHCI_IOBASE
+	hex "hiusb-ehci IO address"
+	default "0x60080000" if ARCH_GODBOX_V1
+	default "0x100b0000" if ARCH_GODEYES
+	default "0x60080000" if ARCH_GODBOX
+	default "0x100b0000" if (ARCH_GODNET || ARCH_GODARM || ARCH_HI3518 || ARCH_HI3520D)
+	default "0x20110000" if ARCH_PHOENIX
+
+config HIUSB_EHCI_IOSIZE
+	hex "hiusb-ehci IO size"
+	default "0x00010000"
+	help
+	  default is 0x10000.
+
+config HIUSB_EHCI_IRQNUM
+	int "hiusb-ehci irq number"
+	default "96" if ARCH_GODBOX_V1
+	default "96" if ARCH_GODBOX
+	default "68" if ARCH_GODEYES
+	default "63" if (ARCH_GODNET || ARCH_GODARM)
+	default "15" if ARCH_HI3518
+	default "74" if ARCH_PHOENIX
+	default "53" if ARCH_HI3520D
+
+config HIUSB_OHCI
+	bool "hiusb-ohci usb host device support"
+	depends on (ARCH_GODBOX_V1)||(ARCH_GODEYES)||(ARCH_GODBOX)||(ARCH_GODNET)||(ARCH_PHOENIX)||(ARCH_GODARM)||(ARCH_HI3518)||(ARCH_HI3520D)
+	default y if (ARCH_GODBOX_V1)||(ARCH_GODEYES)||(ARCH_GODBOX)||(ARCH_GODNET)||(ARCH_PHOENIX)||(ARCH_GODARM)||(ARCH_HI3518)||(ARCH_HI3520D)
+
+config HIUSB_OHCI_IOBASE
+	hex "hiusb-ohci IO address"
+	default "0x60070000" if ARCH_GODBOX_V1
+	default "0x100a0000" if ARCH_GODEYES
+	default "0x60070000" if ARCH_GODBOX
+	default "0x100a0000" if (ARCH_GODNET || ARCH_GODARM || ARCH_HI3518 || ARCH_HI3520D)
+	default "0x20100000" if ARCH_PHOENIX
+
+config HIUSB_OHCI_IOSIZE
+	hex "hiusb-ohci IO size"
+	default "0x00010000"
+	help
+	  default is 0x10000.
+
+config HIUSB_OHCI_IRQNUM
+	int "hiusb-ohci irq number"
+	default "97" if ARCH_GODBOX_V1
+	default "97" if ARCH_GODBOX
+	default "69" if ARCH_GODEYES
+	default "64" if (ARCH_GODNET || ARCH_GODARM)
+	default "16" if ARCH_HI3518
+	default "75" if ARCH_PHOENIX
+	default "54" if ARCH_HI3520D
+
+endif # HIUSB_HOST
+
+endmenu

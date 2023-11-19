@@ -21,7 +21,7 @@
 #include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 #include <linux/of.h>
-
+extern void early_print(const char *str, ...);
 #include "clk.h"
 
 static LIST_HEAD(clocks);
@@ -136,7 +136,7 @@ struct clk *of_clk_get_by_name(struct device_node *np, const char *name)
 {
 	if (!np)
 		return ERR_PTR(-ENOENT);
-
+		early_print("of_clk_get_by_name: %s", name);
 	return __of_clk_get_by_name(np, np->full_name, name);
 }
 EXPORT_SYMBOL(of_clk_get_by_name);

@@ -2141,14 +2141,14 @@ static struct uart_driver amba_reg = {
 	.nr			= UART_NR,
 	.cons			= AMBA_CONSOLE,
 };
-
+extern void early_print(const char *str, ...);
 static int pl011_probe_dt_alias(int index, struct device *dev)
 {
 	struct device_node *np;
 	static bool seen_dev_with_alias = false;
 	static bool seen_dev_without_alias = false;
 	int ret = index;
-
+	early_print("pl011_probe_dt_alias\n");
 	if (!IS_ENABLED(CONFIG_OF))
 		return ret;
 
@@ -2180,7 +2180,7 @@ static int pl011_probe(struct amba_device *dev, const struct amba_id *id)
 	struct vendor_data *vendor = id->data;
 	void __iomem *base;
 	int i, ret;
-
+	early_print("pl011_probe\n");
 	for (i = 0; i < ARRAY_SIZE(amba_ports); i++)
 		if (amba_ports[i] == NULL)
 			break;
