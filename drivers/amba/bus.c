@@ -218,10 +218,6 @@ static int amba_get_enable_pclk(struct amba_device *pcdev)
 	ret = clk_prepare_enable(pcdev->pclk);
 	if (ret)
 		clk_put(pcdev->pclk);
-	else
-	{
-		early_print("clk_prepare_enable failed\n");
-	}
 	return ret;
 }
 
@@ -404,7 +400,6 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 		if (!dev->periphid)
 			ret = -ENODEV;
 	}
-	early_print("amba_device_add: amba_get_enable_pclk failed\n");
 	iounmap(tmp);
 
 	if (ret)
@@ -421,7 +416,6 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 		ret = device_create_file(&dev->dev, &dev_attr_irq1);
 	if (ret == 0)
 	{
-		early_print("amba_device_add: OK\n");
 		return ret;
 	}
 

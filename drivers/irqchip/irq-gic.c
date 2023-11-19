@@ -934,7 +934,6 @@ void __init gic_init_bases(unsigned int gic_nr, int irq_start,
 	struct gic_chip_data *gic;
 	int gic_irqs, irq_base, i;
 	int nr_routable_irqs;
-
 	BUG_ON(gic_nr >= MAX_GIC_NR);
 
 	gic = &gic_data[gic_nr];
@@ -988,7 +987,7 @@ void __init gic_init_bases(unsigned int gic_nr, int irq_start,
 		gic_irqs = 1020;
 	gic->gic_irqs = gic_irqs;
 
-	if (node) {		/* DT case */
+	if (0) {		/* DT case */
 		const struct irq_domain_ops *ops = &gic_irq_domain_hierarchy_ops;
 
 		if (!of_property_read_u32(node, "arm,routable-irqs",

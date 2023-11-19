@@ -222,6 +222,7 @@ static struct clk_onecell_data clk_data;
 void __init hi3520d_timerdev_init(struct device_node *np)
 {
     unsigned long reg = 0, busclk = 0, uartclk;
+    timer_preinit();
     edb_trace();
     setup_irq(TIMER01_IRQ, &hi3520d_timer_irq);
 	setup_irq(TIMER01_IRQ, &hi3520d_freetimer_irq);
