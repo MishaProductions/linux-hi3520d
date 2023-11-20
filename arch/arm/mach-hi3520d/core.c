@@ -80,12 +80,10 @@ void __init hi3520d_init(void)
 		early_print("of_platform_populate failed: %d\n", ret);
 	}
 
-	early_print("sata...\n");
 	// add SATA controller device and write the correct registers
 	#ifdef CONFIG_HI_SATA
 	hi_sata_init((void*)IO_ADDRESS(SATA_BASE));
 	#endif
-	early_print("usb...\n");
 	// add USB controllers
 	#ifdef CONFIG_HIUSB_HOST
 	register_hiusb();
@@ -102,10 +100,9 @@ static const char __initconst *hi3520d_dt_compat[] = {
 	"hisi,hi3520d",
 	NULL,
 };
-extern void __init hi3520d_timerdev_initl(void);
+
 DT_MACHINE_START(HI3520D, "hi3520d")
 	.map_io         = hi3520d_map_io,
-	//.init_irq       = hi3520d_gic_init_irq,
 	.init_machine   = hi3520d_init,
 	.restart = hi3520d_restart,
 	.dt_compat	= hi3520d_dt_compat,
