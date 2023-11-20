@@ -5,11 +5,12 @@
  *
  * Copyright (C) 2008 Imre Kaloz <kaloz@openwrt.org>
  * Copyright (C) 2008-2009 Gabor Juhos <juhosg@openwrt.org>
- * Copyright (C) 2013 John Crispin <blogic@openwrt.org>
+ * Copyright (C) 2013 John Crispin <john@phrozen.org>
  */
 
 #include <linux/io.h>
 #include <linux/clk.h>
+#include <linux/export.h>
 #include <linux/init.h>
 #include <linux/sizes.h>
 #include <linux/of_fdt.h>
@@ -27,6 +28,7 @@
 
 __iomem void *rt_sysc_membase;
 __iomem void *rt_memc_membase;
+EXPORT_SYMBOL_GPL(rt_sysc_membase);
 
 __iomem void *plat_of_remap_node(const char *node)
 {
@@ -73,8 +75,6 @@ void __init plat_mem_setup(void)
 	 * parsed resulting in our memory appearing
 	 */
 	__dt_setup_arch(__dtb_start);
-
-	strlcpy(arcs_cmdline, boot_command_line, COMMAND_LINE_SIZE);
 
 	of_scan_flat_dt(early_init_dt_find_memory, NULL);
 	if (memory_dtb)

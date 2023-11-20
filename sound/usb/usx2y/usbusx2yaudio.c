@@ -166,7 +166,7 @@ static int usX2Y_urb_play_prepare(struct snd_usX2Y_substream *subs,
 			/* set the buffer pointer */
 			urb->transfer_buffer = runtime->dma_area + subs->hwptr * usX2Y->stride;
 			if ((subs->hwptr += count) >= runtime->buffer_size)
-			subs->hwptr -= runtime->buffer_size;			
+				subs->hwptr -= runtime->buffer_size;
 		}
 	else
 		urb->transfer_buffer = subs->tmpbuf;
@@ -691,6 +691,8 @@ static int usX2Y_rate_set(struct usX2Ydev *usX2Y, int rate)
 			us->submitted =	2*NOOF_SETRATE_URBS;
 			for (i = 0; i < NOOF_SETRATE_URBS; ++i) {
 				struct urb *urb = us->urb[i];
+				if (!urb)
+					continue;
 				if (urb->status) {
 					if (!err)
 						err = -ENODEV;

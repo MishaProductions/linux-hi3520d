@@ -648,7 +648,7 @@ csio_shost_init(struct csio_hw *hw, struct device *dev,
 	if (csio_lnode_init(ln, hw, pln))
 		goto err_shost_put;
 
-	if (scsi_add_host(shost, dev))
+	if (scsi_add_host_with_dma(shost, dev, &hw->pdev->dev))
 		goto err_lnode_exit;
 
 	return ln;
@@ -1172,7 +1172,7 @@ static struct pci_error_handlers csio_err_handler = {
  *  Macros needed to support the PCI Device ID Table ...
  */
 #define CH_PCI_DEVICE_ID_TABLE_DEFINE_BEGIN \
-	static struct pci_device_id csio_pci_tbl[] = {
+	static const struct pci_device_id csio_pci_tbl[] = {
 /* Define for FCoE uses PF6 */
 #define CH_PCI_DEVICE_ID_FUNCTION	0x6
 

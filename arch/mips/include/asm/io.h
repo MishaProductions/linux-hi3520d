@@ -60,21 +60,11 @@
  * instruction, so the lower 16 bits must be zero.  Should be true on
  * on any sane architecture; generic code does not use this assumption.
  */
-extern const unsigned long mips_io_port_base;
+extern unsigned long mips_io_port_base;
 
-/*
- * Gcc will generate code to load the value of mips_io_port_base after each
- * function call which may be fairly wasteful in some cases.  So we don't
- * play quite by the book.  We tell gcc mips_io_port_base is a long variable
- * which solves the code generation issue.  Now we need to violate the
- * aliasing rules a little to make initialization possible and finally we
- * will need the barrier() to fight side effects of the aliasing chat.
- * This trickery will eventually collapse under gcc's optimizer.  Oh well.
- */
 static inline void set_io_port_base(unsigned long base)
 {
-	* (unsigned long *) &mips_io_port_base = base;
-	barrier();
+	mips_io_port_base = base;
 }
 
 /*
@@ -141,14 +131,14 @@ static inline void * phys_to_virt(unsigned long address)
 /*
  * ISA I/O bus memory addresses are 1:1 with the physical address.
  */
-static inline unsigned long isa_virt_to_bus(volatile void * address)
+static inline unsigned long isa_virt_to_bus(volatile void *address)
 {
-	return (unsigned long)address - PAGE_OFFSET;
+	return virt_to_phys(address);
 }
 
-static inline void * isa_bus_to_virt(unsigned long address)
+static inline void *isa_bus_to_virt(unsigned long address)
 {
-	return (void *)(address + PAGE_OFFSET);
+	return phys_to_virt(address);
 }
 
 #define isa_page_to_bus page_to_phys
@@ -256,6 +246,7 @@ static inline void __iomem * __ioremap_mode(phys_addr_t offset, unsigned long si
  */
 #define ioremap_nocache(offset, size)					\
 	__ioremap_mode((offset), (size), _CACHE_UNCACHED)
+#define ioremap_uc ioremap_nocache
 
 /*
  * ioremap_cachable -	map bus memory into CPU space
@@ -274,6 +265,7 @@ static inline void __iomem * __ioremap_mode(phys_addr_t offset, unsigned long si
  */
 #define ioremap_cachable(offset, size)					\
 	__ioremap_mode((offset), (size), _page_cachable_default)
+#define ioremap_cache ioremap_cachable
 
 /*
  * These two are MIPS specific ioremap variant.	 ioremap_cacheable_cow
@@ -302,10 +294,10 @@ static inline void iounmap(const volatile void __iomem *addr)
 #undef __IS_KSEG1
 }
 
-#ifdef CONFIG_CPU_CAVIUM_OCTEON
-#define war_octeon_io_reorder_wmb()		wmb()
+#if defined(CONFIG_CPU_CAVIUM_OCTEON) || defined(CONFIG_LOONGSON3_ENHANCEMENT)
+#define war_io_reorder_wmb()		wmb()
 #else
-#define war_octeon_io_reorder_wmb()		do { } while (0)
+#define war_io_reorder_wmb()		do { } while (0)
 #endif
 
 #define __BUILD_MEMORY_SINGLE(pfx, bwlq, type, irq)			\
@@ -316,7 +308,7 @@ static inline void pfx##write##bwlq(type val,				\
 	volatile type *__mem;						\
 	type __val;							\
 									\
-	war_octeon_io_reorder_wmb();					\
+	war_io_reorder_wmb();					\
 									\
 	__mem = (void *)__swizzle_addr_##bwlq((unsigned long)(mem));	\
 									\
@@ -385,7 +377,7 @@ static inline void pfx##out##bwlq##p(type val, unsigned long port)	\
 	volatile type *__addr;						\
 	type __val;							\
 									\
-	war_octeon_io_reorder_wmb();					\
+	war_io_reorder_wmb();					\
 									\
 	__addr = (void *)__swizzle_addr_##bwlq(mips_io_port_base + port); \
 									\
@@ -410,6 +402,8 @@ static inline type pfx##in##bwlq##p(unsigned long port)			\
 	__val = *__addr;						\
 	slow;								\
 									\
+	/* prevent prefetching of coherent DMA data prematurely */	\
+	rmb();								\
 	return pfx##ioswab##bwlq(__addr, __val);			\
 }
 

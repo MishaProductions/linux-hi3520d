@@ -329,12 +329,10 @@ static int net2272_disable(struct usb_ep *_ep)
 static struct usb_request *
 net2272_alloc_request(struct usb_ep *_ep, gfp_t gfp_flags)
 {
-	struct net2272_ep *ep;
 	struct net2272_request *req;
 
 	if (!_ep)
 		return NULL;
-	ep = container_of(_ep, struct net2272_ep, ep);
 
 	req = kzalloc(sizeof(*req), gfp_flags);
 	if (!req)
@@ -348,10 +346,8 @@ net2272_alloc_request(struct usb_ep *_ep, gfp_t gfp_flags)
 static void
 net2272_free_request(struct usb_ep *_ep, struct usb_request *_req)
 {
-	struct net2272_ep *ep;
 	struct net2272_request *req;
 
-	ep = container_of(_ep, struct net2272_ep, ep);
 	if (!_ep || !_req)
 		return;
 
@@ -962,6 +958,7 @@ net2272_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 			break;
 	}
 	if (&req->req != _req) {
+		ep->stopped = stopped;
 		spin_unlock_irqrestore(&ep->dev->lock, flags);
 		return -EINVAL;
 	}
@@ -1404,6 +1401,17 @@ net2272_usb_reinit(struct net2272 *dev)
 		else
 			ep->fifo_size = 64;
 		net2272_ep_reset(ep);
+
+		if (i == 0) {
+			ep->ep.caps.type_control = true;
+		} else {
+			ep->ep.caps.type_iso = true;
+			ep->ep.caps.type_bulk = true;
+			ep->ep.caps.type_int = true;
+		}
+
+		ep->ep.caps.dir_in = true;
+		ep->ep.caps.dir_out = true;
 	}
 	usb_ep_set_maxpacket_limit(&dev->ep[0].ep, 64);
 
@@ -1826,9 +1834,9 @@ net2272_handle_stat0_irqs(struct net2272 *dev, u8 stat)
 				if (!e || u.r.wLength > 2)
 					goto do_stall;
 				if (net2272_ep_read(e, EP_RSPSET) & (1 << ENDPOINT_HALT))
-					status = __constant_cpu_to_le16(1);
+					status = cpu_to_le16(1);
 				else
-					status = __constant_cpu_to_le16(0);
+					status = cpu_to_le16(0);
 
 				/* don't bother with a request object! */
 				net2272_ep_write(&dev->ep[0], EP_IRQENB, 0);
@@ -2089,7 +2097,7 @@ static irqreturn_t net2272_irq(int irq, void *_dev)
 #if defined(PLX_PCI_RDK2)
 	/* see if PCI int for us by checking irqstat */
 	intcsr = readl(dev->rdk2.fpga_base_addr + RDK2_IRQSTAT);
-	if (!intcsr & (1 << NET2272_PCI_IRQ)) {
+	if (!(intcsr & (1 << NET2272_PCI_IRQ))) {
 		spin_unlock(&dev->lock);
 		return IRQ_NONE;
 	}
@@ -2658,6 +2666,8 @@ net2272_plat_probe(struct platform_device *pdev)
  err_req:
 	release_mem_region(base, len);
  err:
+	kfree(dev);
+
 	return ret;
 }
 

@@ -47,6 +47,7 @@ struct bug_entry {
 #ifndef HAVE_ARCH_BUG
 #define BUG() do { \
 	printk("BUG: failure at %s:%d/%s()!\n", __FILE__, __LINE__, __func__); \
+	barrier_before_unreachable(); \
 	panic("BUG!"); \
 } while (0)
 #endif
@@ -81,6 +82,12 @@ extern void warn_slowpath_null(const char *file, const int line);
 	do { printk(arg); __WARN_TAINT(taint); } while (0)
 #endif
 
+/* used internally by panic.c */
+struct warn_args;
+
+void __warn(const char *file, int line, void *caller, unsigned taint,
+	    struct pt_regs *regs, struct warn_args *args);
+
 #ifndef WARN_ON
 #define WARN_ON(condition) ({						\
 	int __ret_warn_on = !!(condition);				\
@@ -110,9 +117,10 @@ extern void warn_slowpath_null(const char *file, const int line);
 	static bool __section(.data.unlikely) __warned;		\
 	int __ret_warn_once = !!(condition);			\
 								\
-	if (unlikely(__ret_warn_once))				\
-		if (WARN_ON(!__warned)) 			\
-			__warned = true;			\
+	if (unlikely(__ret_warn_once && !__warned)) {		\
+		__warned = true;				\
+		WARN_ON(1);					\
+	}							\
 	unlikely(__ret_warn_once);				\
 })
 
@@ -120,9 +128,10 @@ extern void warn_slowpath_null(const char *file, const int line);
 	static bool __section(.data.unlikely) __warned;		\
 	int __ret_warn_once = !!(condition);			\
 								\
-	if (unlikely(__ret_warn_once))				\
-		if (WARN(!__warned, format)) 			\
-			__warned = true;			\
+	if (unlikely(__ret_warn_once && !__warned)) {		\
+		__warned = true;				\
+		WARN(1, format);				\
+	}							\
 	unlikely(__ret_warn_once);				\
 })
 
@@ -130,9 +139,10 @@ extern void warn_slowpath_null(const char *file, const int line);
 	static bool __section(.data.unlikely) __warned;		\
 	int __ret_warn_once = !!(condition);			\
 								\
-	if (unlikely(__ret_warn_once))				\
-		if (WARN_TAINT(!__warned, taint, format))	\
-			__warned = true;			\
+	if (unlikely(__ret_warn_once && !__warned)) {		\
+		__warned = true;				\
+		WARN_TAINT(1, taint, format);			\
+	}							\
 	unlikely(__ret_warn_once);				\
 })
 
@@ -142,7 +152,7 @@ extern void warn_slowpath_null(const char *file, const int line);
 #endif
 
 #ifndef HAVE_ARCH_BUG_ON
-#define BUG_ON(condition) do { if (condition) ; } while (0)
+#define BUG_ON(condition) do { if (condition) BUG(); } while (0)
 #endif
 
 #ifndef HAVE_ARCH_WARN_ON

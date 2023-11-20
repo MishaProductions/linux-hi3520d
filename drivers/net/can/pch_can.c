@@ -559,8 +559,7 @@ static void pch_can_error(struct net_device *ndev, u32 status)
 		stats->rx_errors++;
 		break;
 	case PCH_CRC_ERR:
-		cf->data[3] |= CAN_ERR_PROT_LOC_CRC_SEQ |
-			       CAN_ERR_PROT_LOC_CRC_DEL;
+		cf->data[3] = CAN_ERR_PROT_LOC_CRC_SEQ;
 		priv->can.can_stats.bus_error++;
 		stats->rx_errors++;
 		break;
@@ -704,11 +703,11 @@ static int pch_can_rx_normal(struct net_device *ndev, u32 obj_num, int quota)
 			cf->data[i + 1] = data_reg >> 8;
 		}
 
-		netif_receive_skb(skb);
 		rcv_pkts++;
 		stats->rx_packets++;
 		quota--;
 		stats->rx_bytes += cf->can_dlc;
+		netif_receive_skb(skb);
 
 		pch_fifo_thresh(priv, obj_num);
 		obj_num++;

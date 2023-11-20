@@ -5,7 +5,7 @@
  * This file is released under the GPL.
  */
 
-#include "dm.h"
+#include "dm-core.h"
 
 #include <linux/module.h>
 #include <linux/vmalloc.h>
@@ -524,7 +524,7 @@ static int list_devices(struct dm_ioctl *param, size_t param_size)
 	 * Grab our output buffer.
 	 */
 	nl = get_result_buffer(param, param_size, &len);
-	if (len < needed) {
+	if (len < needed || len < sizeof(nl->dev)) {
 		param->flags |= DM_BUFFER_FULL_FLAG;
 		goto out;
 	}
@@ -1267,6 +1267,15 @@ static int populate_table(struct dm_table *table,
 	return dm_table_complete(table);
 }
 
+static bool is_valid_type(unsigned cur, unsigned new)
+{
+	if (cur == new ||
+	    (cur == DM_TYPE_BIO_BASED && new == DM_TYPE_DAX_BIO_BASED))
+		return true;
+
+	return false;
+}
+
 static int table_load(struct dm_ioctl *param, size_t param_size)
 {
 	int r;
@@ -1291,28 +1300,30 @@ static int table_load(struct dm_ioctl *param, size_t param_size)
 
 	immutable_target_type = dm_get_immutable_target_type(md);
 	if (immutable_target_type &&
-	    (immutable_target_type != dm_table_get_immutable_target_type(t))) {
+	    (immutable_target_type != dm_table_get_immutable_target_type(t)) &&
+	    !dm_table_get_wildcard_target(t)) {
 		DMWARN("can't replace immutable target type %s",
 		       immutable_target_type->name);
 		r = -EINVAL;
 		goto err_unlock_md_type;
 	}
 
-	if (dm_get_md_type(md) == DM_TYPE_NONE)
+	if (dm_get_md_type(md) == DM_TYPE_NONE) {
 		/* Initial table load: acquire type of table. */
 		dm_set_md_type(md, dm_table_get_type(t));
-	else if (dm_get_md_type(md) != dm_table_get_type(t)) {
+
+		/* setup md->queue to reflect md's type (may block) */
+		r = dm_setup_md_queue(md, t);
+		if (r) {
+			DMWARN("unable to set up device queue for new table.");
+			goto err_unlock_md_type;
+		}
+	} else if (!is_valid_type(dm_get_md_type(md), dm_table_get_type(t))) {
 		DMWARN("can't change device type after initial table load.");
 		r = -EINVAL;
 		goto err_unlock_md_type;
 	}
 
-	/* setup md->queue to reflect md's type (may block) */
-	r = dm_setup_md_queue(md);
-	if (r) {
-		DMWARN("unable to set up device queue for new table.");
-		goto err_unlock_md_type;
-	}
 	dm_unlock_md_type(md);
 
 	/* stage inactive table */
@@ -1538,6 +1549,7 @@ static int target_message(struct dm_ioctl *param, size_t param_size)
 
 	if (!argc) {
 		DMWARN("Empty message received.");
+		r = -EINVAL;
 		goto out_argv;
 	}
 
@@ -1668,8 +1680,7 @@ static int check_version(unsigned int cmd, struct dm_ioctl __user *user)
 	return r;
 }
 
-#define DM_PARAMS_KMALLOC	0x0001	/* Params alloced with kmalloc */
-#define DM_PARAMS_VMALLOC	0x0002	/* Params alloced with vmalloc */
+#define DM_PARAMS_MALLOC	0x0001	/* Params allocated with kvmalloc() */
 #define DM_WIPE_BUFFER		0x0010	/* Wipe input buffer before returning from ioctl */
 
 static void free_params(struct dm_ioctl *param, size_t param_size, int param_flags)
@@ -1677,15 +1688,12 @@ static void free_params(struct dm_ioctl *param, size_t param_size, int param_fla
 	if (param_flags & DM_WIPE_BUFFER)
 		memset(param, 0, param_size);
 
-	if (param_flags & DM_PARAMS_KMALLOC)
-		kfree(param);
-	if (param_flags & DM_PARAMS_VMALLOC)
-		vfree(param);
+	if (param_flags & DM_PARAMS_MALLOC)
+		kvfree(param);
 }
 
 static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kernel,
-		       int ioctl_flags,
-		       struct dm_ioctl **param, int *param_flags)
+		       int ioctl_flags, struct dm_ioctl **param, int *param_flags)
 {
 	struct dm_ioctl *dmi;
 	int secure_data;
@@ -1712,19 +1720,14 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kern
 	 * Use kmalloc() rather than vmalloc() when we can.
 	 */
 	dmi = NULL;
-	if (param_kernel->data_size <= KMALLOC_MAX_SIZE) {
+	if (param_kernel->data_size <= KMALLOC_MAX_SIZE)
 		dmi = kmalloc(param_kernel->data_size, GFP_NOIO | __GFP_NORETRY | __GFP_NOMEMALLOC | __GFP_NOWARN);
-		if (dmi)
-			*param_flags |= DM_PARAMS_KMALLOC;
-	}
 
 	if (!dmi) {
 		unsigned noio_flag;
 		noio_flag = memalloc_noio_save();
-		dmi = __vmalloc(param_kernel->data_size, GFP_NOIO | __GFP_REPEAT | __GFP_HIGH | __GFP_HIGHMEM, PAGE_KERNEL);
+		dmi = __vmalloc(param_kernel->data_size, GFP_NOIO | __GFP_HIGH | __GFP_HIGHMEM, PAGE_KERNEL);
 		memalloc_noio_restore(noio_flag);
-		if (dmi)
-			*param_flags |= DM_PARAMS_VMALLOC;
 	}
 
 	if (!dmi) {
@@ -1733,18 +1736,15 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kern
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(dmi, user, param_kernel->data_size))
-		goto bad;
+	*param_flags |= DM_PARAMS_MALLOC;
 
+	/* Copy from param_kernel (which was already copied from user) */
+	memcpy(dmi, param_kernel, minimum_data_size);
+
+	if (copy_from_user(&dmi->data, (char __user *)user + minimum_data_size,
+			   param_kernel->data_size - minimum_data_size))
+		goto bad;
 data_copied:
-	/*
-	 * Abort if something changed the ioctl data while it was being copied.
-	 */
-	if (dmi->data_size != param_kernel->data_size) {
-		DMERR("rejecting ioctl: data size modified while processing parameters");
-		goto bad;
-	}
-
 	/* Wipe the user buffer so we do not return it to userspace */
 	if (secure_data && clear_user(user, param_kernel->data_size))
 		goto bad;
@@ -1772,12 +1772,12 @@ static int validate_params(uint cmd, struct dm_ioctl *param)
 	    cmd == DM_LIST_VERSIONS_CMD)
 		return 0;
 
-	if ((cmd == DM_DEV_CREATE_CMD)) {
+	if (cmd == DM_DEV_CREATE_CMD) {
 		if (!*param->name) {
 			DMWARN("name not supplied when creating device");
 			return -EINVAL;
 		}
-	} else if ((*param->uuid && *param->name)) {
+	} else if (*param->uuid && *param->name) {
 		DMWARN("only supply one of name or uuid, cmd(%u)", cmd);
 		return -EINVAL;
 	}
@@ -1842,7 +1842,7 @@ static int ctl_ioctl(uint command, struct dm_ioctl __user *user)
 	if (r)
 		goto out;
 
-	param->data_size = sizeof(*param);
+	param->data_size = offsetof(struct dm_ioctl, data);
 	r = fn(param, input_param_size);
 
 	if (unlikely(param->flags & DM_BUFFER_FULL_FLAG) &&
@@ -1918,9 +1918,7 @@ int __init dm_interface_init(void)
 
 void dm_interface_exit(void)
 {
-	if (misc_deregister(&_dm_misc) < 0)
-		DMERR("misc_deregister failed for control device");
-
+	misc_deregister(&_dm_misc);
 	dm_hash_exit();
 }
 

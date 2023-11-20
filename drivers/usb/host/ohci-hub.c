@@ -310,8 +310,10 @@ static int ohci_bus_suspend (struct usb_hcd *hcd)
 		rc = ohci_rh_suspend (ohci, 0);
 	spin_unlock_irq (&ohci->lock);
 
-	if (rc == 0)
+	if (rc == 0) {
 		del_timer_sync(&ohci->io_watchdog);
+		ohci->prev_frame_no = IO_WATCHDOG_OFF;
+	}
 	return rc;
 }
 
@@ -536,7 +538,7 @@ ohci_hub_descriptor (
 	u32		rh = roothub_a (ohci);
 	u16		temp;
 
-	desc->bDescriptorType = 0x29;
+	desc->bDescriptorType = USB_DT_HUB;
 	desc->bPwrOn2PwrGood = (rh & RH_A_POTPGT) >> 24;
 	desc->bHubContrCurrent = 0;
 

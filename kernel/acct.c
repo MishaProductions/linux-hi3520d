@@ -99,7 +99,7 @@ static int check_free_space(struct bsd_acct_struct *acct)
 {
 	struct kstatfs sbuf;
 
-	if (time_is_before_jiffies(acct->needcheck))
+	if (time_is_after_jiffies(acct->needcheck))
 		goto out;
 
 	/* May block */
@@ -213,7 +213,7 @@ static int acct_on(struct filename *pathname)
 		return -EACCES;
 	}
 
-	if (!file->f_op->write) {
+	if (!(file->f_mode & FMODE_CAN_WRITE)) {
 		kfree(acct);
 		filp_close(file, NULL);
 		return -EIO;

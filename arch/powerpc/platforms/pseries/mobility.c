@@ -11,6 +11,7 @@
 
 #include <linux/kernel.h>
 #include <linux/kobject.h>
+#include <linux/sched.h>
 #include <linux/smp.h>
 #include <linux/stat.h>
 #include <linux/completion.h>
@@ -191,8 +192,8 @@ static int update_dt_node(__be32 phandle, s32 scope)
 				break;
 
 			case 0x80000000:
-				prop = of_find_property(dn, prop_name, NULL);
-				of_remove_property(dn, prop);
+				of_remove_property(dn, of_find_property(dn,
+							prop_name, NULL));
 				prop = NULL;
 				break;
 
@@ -206,7 +207,11 @@ static int update_dt_node(__be32 phandle, s32 scope)
 
 				prop_data += vd;
 			}
+
+			cond_resched();
 		}
+
+		cond_resched();
 	} while (rtas_rc == 1);
 
 	of_node_put(dn);
@@ -225,8 +230,10 @@ static int add_dt_node(__be32 parent_phandle, __be32 drc_index)
 		return -ENOENT;
 
 	dn = dlpar_configure_connector(drc_index, parent_dn);
-	if (!dn)
+	if (!dn) {
+		of_node_put(parent_dn);
 		return -ENOENT;
+	}
 
 	rc = dlpar_attach_node(dn);
 	if (rc)
@@ -280,8 +287,12 @@ int pseries_devicetree_update(s32 scope)
 					add_dt_node(phandle, drc_index);
 					break;
 				}
+
+				cond_resched();
 			}
 		}
+
+		cond_resched();
 	} while (rc == 1);
 
 	kfree(rtas_buf);
@@ -312,6 +323,9 @@ void post_mobility_fixup(void)
 		printk(KERN_ERR "Post-mobility device tree update "
 			"failed: %d\n", rc);
 
+	/* Possibly switch to a new RFI flush type */
+	pseries_setup_rfi_flush();
+
 	return;
 }
 
@@ -320,28 +334,34 @@ static ssize_t migrate_store(struct class *class, struct class_attribute *attr,
 {
 	u64 streamid;
 	int rc;
-	int vasi_rc = 0;
 
 	rc = kstrtou64(buf, 0, &streamid);
 	if (rc)
 		return rc;
 
 	do {
-		rc = rtas_ibm_suspend_me(streamid, &vasi_rc);
-		if (!rc && vasi_rc == RTAS_NOT_SUSPENDABLE)
+		rc = rtas_ibm_suspend_me(streamid);
+		if (rc == -EAGAIN)
 			ssleep(1);
-	} while (!rc && vasi_rc == RTAS_NOT_SUSPENDABLE);
+	} while (rc == -EAGAIN);
 
 	if (rc)
 		return rc;
-	if (vasi_rc)
-		return vasi_rc;
 
 	post_mobility_fixup();
 	return count;
 }
 
+/*
+ * Used by drmgr to determine the kernel behavior of the migration interface.
+ *
+ * Version 1: Performs all PAPR requirements for migration including
+ *	firmware activation and device tree update.
+ */
+#define MIGRATION_API_VERSION	1
+
 static CLASS_ATTR(migration, S_IWUSR, NULL, migrate_store);
+static CLASS_ATTR_STRING(api_version, S_IRUGO, __stringify(MIGRATION_API_VERSION));
 
 static int __init mobility_sysfs_init(void)
 {
@@ -352,7 +372,13 @@ static int __init mobility_sysfs_init(void)
 		return -ENOMEM;
 
 	rc = sysfs_create_file(mobility_kobj, &class_attr_migration.attr);
+	if (rc)
+		pr_err("mobility: unable to create migration sysfs file (%d)\n", rc);
 
-	return rc;
+	rc = sysfs_create_file(mobility_kobj, &class_attr_api_version.attr.attr);
+	if (rc)
+		pr_err("mobility: unable to create api_version sysfs file (%d)\n", rc);
+
+	return 0;
 }
 machine_device_initcall(pseries, mobility_sysfs_init);

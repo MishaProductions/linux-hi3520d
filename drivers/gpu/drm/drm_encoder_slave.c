@@ -84,7 +84,7 @@ int drm_i2c_encoder_init(struct drm_device *dev,
 
 	err = encoder_drv->encoder_init(client, dev, encoder);
 	if (err)
-		goto fail_unregister;
+		goto fail_module_put;
 
 	if (info->platform_data)
 		encoder->slave_funcs->set_config(&encoder->base,
@@ -92,9 +92,10 @@ int drm_i2c_encoder_init(struct drm_device *dev,
 
 	return 0;
 
+fail_module_put:
+	module_put(module);
 fail_unregister:
 	i2c_unregister_device(client);
-	module_put(module);
 fail:
 	return err;
 }
@@ -124,7 +125,7 @@ EXPORT_SYMBOL(drm_i2c_encoder_destroy);
  * Wrapper fxns which can be plugged in to drm_encoder_helper_funcs:
  */
 
-static inline struct drm_encoder_slave_funcs *
+static inline const struct drm_encoder_slave_funcs *
 get_slave_funcs(struct drm_encoder *enc)
 {
 	return to_encoder_slave(enc)->slave_funcs;
@@ -140,6 +141,9 @@ bool drm_i2c_encoder_mode_fixup(struct drm_encoder *encoder,
 		const struct drm_display_mode *mode,
 		struct drm_display_mode *adjusted_mode)
 {
+	if (!get_slave_funcs(encoder)->mode_fixup)
+		return true;
+
 	return get_slave_funcs(encoder)->mode_fixup(encoder, mode, adjusted_mode);
 }
 EXPORT_SYMBOL(drm_i2c_encoder_mode_fixup);

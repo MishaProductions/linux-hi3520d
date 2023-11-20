@@ -714,7 +714,7 @@ static void neo_clear_break(struct jsm_channel *ch)
 /*
  * Parse the ISR register.
  */
-static inline void neo_parse_isr(struct jsm_board *brd, u32 port)
+static void neo_parse_isr(struct jsm_board *brd, u32 port)
 {
 	struct jsm_channel *ch;
 	u8 isr;
@@ -724,7 +724,7 @@ static inline void neo_parse_isr(struct jsm_board *brd, u32 port)
 	if (!brd)
 		return;
 
-	if (port > brd->maxports)
+	if (port >= brd->maxports)
 		return;
 
 	ch = brd->channels[port];
@@ -827,7 +827,9 @@ static inline void neo_parse_isr(struct jsm_board *brd, u32 port)
 		/* Parse any modem signal changes */
 		jsm_dbg(INTR, &ch->ch_bd->pci_dev,
 			"MOD_STAT: sending to parse_modem_sigs\n");
+		spin_lock_irqsave(&ch->uart_port.lock, lock_flags);
 		neo_parse_modem(ch, readb(&ch->ch_neo_uart->msr));
+		spin_unlock_irqrestore(&ch->uart_port.lock, lock_flags);
 	}
 }
 
@@ -840,7 +842,7 @@ static inline void neo_parse_lsr(struct jsm_board *brd, u32 port)
 	if (!brd)
 		return;
 
-	if (port > brd->maxports)
+	if (port >= brd->maxports)
 		return;
 
 	ch = brd->channels[port];
@@ -1180,7 +1182,7 @@ static irqreturn_t neo_intr(int irq, void *voidbrd)
 			 */
 
 			/* Verify the port is in range. */
-			if (port > brd->nasync)
+			if (port >= brd->nasync)
 				continue;
 
 			ch = brd->channels[port];

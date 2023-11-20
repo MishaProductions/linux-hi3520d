@@ -122,7 +122,7 @@
 /* Descriptor table word 0 bit (when DTA32M = 1) */
 #define SATA_RCAR_DTEND			BIT(0)
 
-#define SATA_RCAR_DMA_BOUNDARY		0x1FFFFFFEUL
+#define SATA_RCAR_DMA_BOUNDARY		0x1FFFFFFFUL
 
 /* Gen2 Physical Layer Control Registers */
 #define RCAR_GEN2_PHY_CTL1_REG		0x1704
@@ -551,12 +551,14 @@ static void sata_rcar_bmdma_fill_sg(struct ata_queued_cmd *qc)
 	prd[si - 1].addr |= cpu_to_le32(SATA_RCAR_DTEND);
 }
 
-static void sata_rcar_qc_prep(struct ata_queued_cmd *qc)
+static enum ata_completion_errors sata_rcar_qc_prep(struct ata_queued_cmd *qc)
 {
 	if (!(qc->flags & ATA_QCFLAG_DMAMAP))
-		return;
+		return AC_ERR_OK;
 
 	sata_rcar_bmdma_fill_sg(qc);
+
+	return AC_ERR_OK;
 }
 
 static void sata_rcar_bmdma_setup(struct ata_queued_cmd *qc)
@@ -854,20 +856,13 @@ static struct of_device_id sata_rcar_match[] = {
 		.compatible = "renesas,sata-r8a7793",
 		.data = (void *)RCAR_GEN2_SATA
 	},
+	{
+		.compatible = "renesas,sata-r8a7795",
+		.data = (void *)RCAR_GEN2_SATA
+	},
 	{ },
 };
 MODULE_DEVICE_TABLE(of, sata_rcar_match);
-
-static const struct platform_device_id sata_rcar_id_table[] = {
-	{ "sata_rcar", RCAR_GEN1_SATA }, /* Deprecated by "sata-r8a7779" */
-	{ "sata-r8a7779", RCAR_GEN1_SATA },
-	{ "sata-r8a7790", RCAR_GEN2_SATA },
-	{ "sata-r8a7790-es1", RCAR_R8A7790_ES1_SATA },
-	{ "sata-r8a7791", RCAR_GEN2_SATA },
-	{ "sata-r8a7793", RCAR_GEN2_SATA },
-	{ },
-};
-MODULE_DEVICE_TABLE(platform, sata_rcar_id_table);
 
 static int sata_rcar_probe(struct platform_device *pdev)
 {
@@ -879,7 +874,9 @@ static int sata_rcar_probe(struct platform_device *pdev)
 	int ret = 0;
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq <= 0)
+	if (irq < 0)
+		return irq;
+	if (!irq)
 		return -EINVAL;
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(struct sata_rcar_priv),
@@ -888,17 +885,19 @@ static int sata_rcar_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	of_id = of_match_device(sata_rcar_match, &pdev->dev);
-	if (of_id)
-		priv->type = (enum sata_rcar_type)of_id->data;
-	else
-		priv->type = platform_get_device_id(pdev)->driver_data;
+	if (!of_id)
+		return -ENODEV;
 
+	priv->type = (enum sata_rcar_type)of_id->data;
 	priv->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(priv->clk)) {
 		dev_err(&pdev->dev, "failed to get access to sata clock\n");
 		return PTR_ERR(priv->clk);
 	}
-	clk_prepare_enable(priv->clk);
+
+	ret = clk_prepare_enable(priv->clk);
+	if (ret)
+		return ret;
 
 	host = ata_host_alloc(&pdev->dev, 1);
 	if (!host) {
@@ -978,8 +977,11 @@ static int sata_rcar_resume(struct device *dev)
 	struct ata_host *host = dev_get_drvdata(dev);
 	struct sata_rcar_priv *priv = host->private_data;
 	void __iomem *base = priv->base;
+	int ret;
 
-	clk_prepare_enable(priv->clk);
+	ret = clk_prepare_enable(priv->clk);
+	if (ret)
+		return ret;
 
 	/* ack and mask */
 	iowrite32(0, base + SATAINTSTAT_REG);
@@ -996,8 +998,11 @@ static int sata_rcar_restore(struct device *dev)
 {
 	struct ata_host *host = dev_get_drvdata(dev);
 	struct sata_rcar_priv *priv = host->private_data;
+	int ret;
 
-	clk_prepare_enable(priv->clk);
+	ret = clk_prepare_enable(priv->clk);
+	if (ret)
+		return ret;
 
 	sata_rcar_setup_port(host);
 
@@ -1022,7 +1027,6 @@ static const struct dev_pm_ops sata_rcar_pm_ops = {
 static struct platform_driver sata_rcar_driver = {
 	.probe		= sata_rcar_probe,
 	.remove		= sata_rcar_remove,
-	.id_table	= sata_rcar_id_table,
 	.driver = {
 		.name		= DRV_NAME,
 		.of_match_table	= sata_rcar_match,

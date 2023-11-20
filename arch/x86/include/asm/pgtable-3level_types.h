@@ -24,8 +24,6 @@ typedef union {
 #define SHARED_KERNEL_PMD	1
 #endif
 
-#define PAGETABLE_LEVELS	3
-
 /*
  * PGDIR_SHIFT determines what a top-level page table entry can map
  */
@@ -44,5 +42,6 @@ typedef union {
  */
 #define PTRS_PER_PTE	512
 
+#define MAX_POSSIBLE_PHYSMEM_BITS	36
 
 #endif /* _ASM_X86_PGTABLE_3LEVEL_DEFS_H */

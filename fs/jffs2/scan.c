@@ -1075,7 +1075,7 @@ static int jffs2_scan_dirent_node(struct jffs2_sb_info *c, struct jffs2_eraseblo
 	memcpy(&fd->name, rd->name, checkedlen);
 	fd->name[checkedlen] = 0;
 
-	crc = crc32(0, fd->name, rd->nsize);
+	crc = crc32(0, fd->name, checkedlen);
 	if (crc != je32_to_cpu(rd->name_crc)) {
 		pr_notice("%s(): Name CRC failed on node at 0x%08x: Read 0x%08x, calculated 0x%08x\n",
 			  __func__, ofs, je32_to_cpu(rd->name_crc), crc);
@@ -1100,7 +1100,7 @@ static int jffs2_scan_dirent_node(struct jffs2_sb_info *c, struct jffs2_eraseblo
 	fd->next = NULL;
 	fd->version = je32_to_cpu(rd->version);
 	fd->ino = je32_to_cpu(rd->ino);
-	fd->nhash = full_name_hash(fd->name, checkedlen);
+	fd->nhash = full_name_hash(NULL, fd->name, checkedlen);
 	fd->type = rd->type;
 	jffs2_add_fd_to_list(c, fd, &ic->scan_dents);
 

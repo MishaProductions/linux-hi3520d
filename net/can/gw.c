@@ -110,6 +110,7 @@ struct cf_mod {
 		void (*xor)(struct can_frame *cf, struct cgw_csum_xor *xor);
 		void (*crc8)(struct can_frame *cf, struct cgw_csum_crc8 *crc8);
 	} csumfunc;
+	u32 uid;
 };
 
 
@@ -417,13 +418,29 @@ static void can_can_gw_rcv(struct sk_buff *skb, void *data)
 	while (modidx < MAX_MODFUNCTIONS && gwj->mod.modfunc[modidx])
 		(*gwj->mod.modfunc[modidx++])(cf, &gwj->mod);
 
-	/* check for checksum updates when the CAN frame has been modified */
+	/* Has the CAN frame been modified? */
 	if (modidx) {
-		if (gwj->mod.csumfunc.crc8)
-			(*gwj->mod.csumfunc.crc8)(cf, &gwj->mod.csum.crc8);
+		/* get available space for the processed CAN frame type */
+		int max_len = nskb->len - offsetof(struct can_frame, data);
 
-		if (gwj->mod.csumfunc.xor)
+		/* dlc may have changed, make sure it fits to the CAN frame */
+		if (cf->can_dlc > max_len)
+			goto out_delete;
+
+		/* check for checksum updates in classic CAN length only */
+		if (gwj->mod.csumfunc.crc8) {
+			if (cf->can_dlc > 8)
+				goto out_delete;
+
+			(*gwj->mod.csumfunc.crc8)(cf, &gwj->mod.csum.crc8);
+		}
+
+		if (gwj->mod.csumfunc.xor) {
+			if (cf->can_dlc > 8)
+				goto out_delete;
+
 			(*gwj->mod.csumfunc.xor)(cf, &gwj->mod.csum.xor);
+		}
 	}
 
 	/* clear the skb timestamp if not configured the other way */
@@ -435,13 +452,21 @@ static void can_can_gw_rcv(struct sk_buff *skb, void *data)
 		gwj->dropped_frames++;
 	else
 		gwj->handled_frames++;
+
+	return;
+
+ out_delete:
+	/* delete frame due to misconfiguration */
+	gwj->deleted_frames++;
+	kfree_skb(nskb);
+	return;
 }
 
 static inline int cgw_register_filter(struct cgw_job *gwj)
 {
 	return can_rx_register(gwj->src.dev, gwj->ccgw.filter.can_id,
 			       gwj->ccgw.filter.can_mask, can_can_gw_rcv,
-			       gwj, "gw");
+			       gwj, "gw", NULL);
 }
 
 static inline void cgw_unregister_filter(struct cgw_job *gwj)
@@ -472,6 +497,7 @@ static int cgw_notifier(struct notifier_block *nb,
 			if (gwj->src.dev == dev || gwj->dst.dev == dev) {
 				hlist_del(&gwj->list);
 				cgw_unregister_filter(gwj);
+				synchronize_rcu();
 				kmem_cache_free(cgw_cache, gwj);
 			}
 		}
@@ -548,6 +574,11 @@ static int cgw_put_job(struct sk_buff *skb, struct cgw_job *gwj, int type,
 			goto cancel;
 	}
 
+	if (gwj->mod.uid) {
+		if (nla_put_u32(skb, CGW_MOD_UID, gwj->mod.uid) < 0)
+			goto cancel;
+	}
+
 	if (gwj->mod.csumfunc.crc8) {
 		if (nla_put(skb, CGW_CS_CRC8, CGW_CS_CRC8_LEN,
 			    &gwj->mod.csum.crc8) < 0)
@@ -619,6 +650,7 @@ static const struct nla_policy cgw_policy[CGW_MAX+1] = {
 	[CGW_DST_IF]	= { .type = NLA_U32 },
 	[CGW_FILTER]	= { .len = sizeof(struct can_filter) },
 	[CGW_LIM_HOPS]	= { .type = NLA_U8 },
+	[CGW_MOD_UID]	= { .type = NLA_U32 },
 };
 
 /* check for common and gwtype specific attributes */
@@ -761,6 +793,10 @@ static int cgw_parse_attr(struct nlmsghdr *nlh, struct cf_mod *mod,
 			else
 				mod->csumfunc.xor = cgw_csum_xor_neg;
 		}
+
+		if (tb[CGW_MOD_UID]) {
+			nla_memcpy(&mod->uid, tb[CGW_MOD_UID], sizeof(u32));
+		}
 	}
 
 	if (gwtype == CGW_TYPE_CAN_CAN) {
@@ -802,6 +838,8 @@ static int cgw_create_job(struct sk_buff *skb,  struct nlmsghdr *nlh)
 {
 	struct rtcanmsg *r;
 	struct cgw_job *gwj;
+	struct cf_mod mod;
+	struct can_can_gw ccgw;
 	u8 limhops = 0;
 	int err = 0;
 
@@ -819,6 +857,36 @@ static int cgw_create_job(struct sk_buff *skb,  struct nlmsghdr *nlh)
 	if (r->gwtype != CGW_TYPE_CAN_CAN)
 		return -EINVAL;
 
+	err = cgw_parse_attr(nlh, &mod, CGW_TYPE_CAN_CAN, &ccgw, &limhops);
+	if (err < 0)
+		return err;
+
+	if (mod.uid) {
+
+		ASSERT_RTNL();
+
+		/* check for updating an existing job with identical uid */
+		hlist_for_each_entry(gwj, &cgw_list, list) {
+
+			if (gwj->mod.uid != mod.uid)
+				continue;
+
+			/* interfaces & filters must be identical */
+			if (memcmp(&gwj->ccgw, &ccgw, sizeof(ccgw)))
+				return -EINVAL;
+
+			/* update modifications with disabled softirq & quit */
+			local_bh_disable();
+			memcpy(&gwj->mod, &mod, sizeof(mod));
+			local_bh_enable();
+			return 0;
+		}
+	}
+
+	/* ifindex == 0 is not allowed for job creation */
+	if (!ccgw.src_idx || !ccgw.dst_idx)
+		return -ENODEV;
+
 	gwj = kmem_cache_alloc(cgw_cache, GFP_KERNEL);
 	if (!gwj)
 		return -ENOMEM;
@@ -828,17 +896,13 @@ static int cgw_create_job(struct sk_buff *skb,  struct nlmsghdr *nlh)
 	gwj->deleted_frames = 0;
 	gwj->flags = r->flags;
 	gwj->gwtype = r->gwtype;
+	gwj->limit_hops = limhops;
 
-	err = cgw_parse_attr(nlh, &gwj->mod, CGW_TYPE_CAN_CAN, &gwj->ccgw,
-			     &limhops);
-	if (err < 0)
-		goto out;
+	/* insert already parsed information */
+	memcpy(&gwj->mod, &mod, sizeof(mod));
+	memcpy(&gwj->ccgw, &ccgw, sizeof(ccgw));
 
 	err = -ENODEV;
-
-	/* ifindex == 0 is not allowed for job creation */
-	if (!gwj->ccgw.src_idx || !gwj->ccgw.dst_idx)
-		goto out;
 
 	gwj->src.dev = __dev_get_by_index(&init_net, gwj->ccgw.src_idx);
 
@@ -855,8 +919,6 @@ static int cgw_create_job(struct sk_buff *skb,  struct nlmsghdr *nlh)
 
 	if (gwj->dst.dev->type != ARPHRD_CAN)
 		goto out;
-
-	gwj->limit_hops = limhops;
 
 	ASSERT_RTNL();
 
@@ -880,6 +942,7 @@ static void cgw_remove_all_jobs(void)
 	hlist_for_each_entry_safe(gwj, nx, &cgw_list, list) {
 		hlist_del(&gwj->list);
 		cgw_unregister_filter(gwj);
+		synchronize_rcu();
 		kmem_cache_free(cgw_cache, gwj);
 	}
 }
@@ -931,8 +994,15 @@ static int cgw_remove_job(struct sk_buff *skb, struct nlmsghdr *nlh)
 		if (gwj->limit_hops != limhops)
 			continue;
 
-		if (memcmp(&gwj->mod, &mod, sizeof(mod)))
-			continue;
+		/* we have a match when uid is enabled and identical */
+		if (gwj->mod.uid || mod.uid) {
+			if (gwj->mod.uid != mod.uid)
+				continue;
+		} else {
+			/* no uid => check for identical modifications */
+			if (memcmp(&gwj->mod, &mod, sizeof(mod)))
+				continue;
+		}
 
 		/* if (r->gwtype == CGW_TYPE_CAN_CAN) - is made sure here */
 		if (memcmp(&gwj->ccgw, &ccgw, sizeof(ccgw)))
@@ -940,6 +1010,7 @@ static int cgw_remove_job(struct sk_buff *skb, struct nlmsghdr *nlh)
 
 		hlist_del(&gwj->list);
 		cgw_unregister_filter(gwj);
+		synchronize_rcu();
 		kmem_cache_free(cgw_cache, gwj);
 		err = 0;
 		break;

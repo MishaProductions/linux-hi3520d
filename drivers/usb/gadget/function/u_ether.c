@@ -48,6 +48,11 @@
 
 #define UETH__VERSION	"29-May-2008"
 
+/* Experiments show that both Linux and Windows hosts allow up to 16k
+ * frame sizes. Set the max size to 15k+52 to prevent allocating 32k
+ * blocks and still have efficient handling. */
+#define GETHER_MAX_ETH_FRAME_LEN 15412
+
 struct eth_dev {
 	/* lock is held while accessing port_usb
 	 */
@@ -77,6 +82,7 @@ struct eth_dev {
 #define	WORK_RX_MEMORY		0
 
 	bool			zlp;
+	bool			no_skb_reserve;
 	u8			host_mac[ETH_ALEN];
 	u8			dev_mac[ETH_ALEN];
 };
@@ -91,7 +97,7 @@ struct eth_dev {
 static inline int qlen(struct usb_gadget *gadget, unsigned qmult)
 {
 	if (gadget_is_dualspeed(gadget) && (gadget->speed == USB_SPEED_HIGH ||
-					    gadget->speed == USB_SPEED_SUPER))
+					    gadget->speed >= USB_SPEED_SUPER))
 		return qmult * DEFAULT_QLEN;
 	else
 		return DEFAULT_QLEN;
@@ -138,21 +144,11 @@ static inline int qlen(struct usb_gadget *gadget, unsigned qmult)
 
 static int ueth_change_mtu(struct net_device *net, int new_mtu)
 {
-	struct eth_dev	*dev = netdev_priv(net);
-	unsigned long	flags;
-	int		status = 0;
+	if (new_mtu <= ETH_HLEN || new_mtu > GETHER_MAX_ETH_FRAME_LEN)
+		return -ERANGE;
+	net->mtu = new_mtu;
 
-	/* don't change MTU on "live" link (peer won't know) */
-	spin_lock_irqsave(&dev->lock, flags);
-	if (dev->port_usb)
-		status = -EBUSY;
-	else if (new_mtu <= ETH_HLEN || new_mtu > ETH_FRAME_LEN)
-		status = -ERANGE;
-	else
-		net->mtu = new_mtu;
-	spin_unlock_irqrestore(&dev->lock, flags);
-
-	return status;
+	return 0;
 }
 
 static void eth_get_drvinfo(struct net_device *net, struct ethtool_drvinfo *p)
@@ -202,11 +198,12 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 		out = dev->port_usb->out_ep;
 	else
 		out = NULL;
-	spin_unlock_irqrestore(&dev->lock, flags);
 
 	if (!out)
+	{
+		spin_unlock_irqrestore(&dev->lock, flags);
 		return -ENOTCONN;
-
+	}
 
 	/* Padding up to RX_EXTRA handles minor disagreements with host.
 	 * Normally we use the USB "terminate on short read" convention;
@@ -227,6 +224,7 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 
 	if (dev->port_usb->is_fixed)
 		size = max_t(size_t, size, dev->port_usb->fixed_out_len);
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	skb = alloc_skb(size + NET_IP_ALIGN, gfp_flags);
 	if (skb == NULL) {
@@ -238,7 +236,8 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 	 * but on at least one, checksumming fails otherwise.  Note:
 	 * RNDIS headers involve variable numbers of LE32 values.
 	 */
-	skb_reserve(skb, NET_IP_ALIGN);
+	if (likely(!dev->no_skb_reserve))
+		skb_reserve(skb, NET_IP_ALIGN);
 
 	req->buf = skb->data;
 	req->length = size;
@@ -294,7 +293,7 @@ static void rx_complete(struct usb_ep *ep, struct usb_request *req)
 		while (skb2) {
 			if (status < 0
 					|| ETH_HLEN > skb2->len
-					|| skb2->len > VLAN_ETH_FRAME_LEN) {
+					|| skb2->len > GETHER_MAX_ETH_FRAME_LEN) {
 				dev->net->stats.rx_errors++;
 				dev->net->stats.rx_length_errors++;
 				DBG(dev, "rx length %d\n", skb2->len);
@@ -500,8 +499,9 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	}
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	if (skb && !in) {
-		dev_kfree_skb_any(skb);
+	if (!in) {
+		if (skb)
+			dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
 
@@ -561,7 +561,8 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 			/* Multi frame CDC protocols may store the frame for
 			 * later which is not a dropped frame.
 			 */
-			if (dev->port_usb->supports_multi_frame)
+			if (dev->port_usb &&
+					dev->port_usb->supports_multi_frame)
 				goto multiframe;
 			goto drop;
 		}
@@ -573,7 +574,8 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 	req->complete = tx_complete;
 
 	/* NCM requires no zlp if transfer is dwNtbInMaxSize */
-	if (dev->port_usb->is_fixed &&
+	if (dev->port_usb &&
+	    dev->port_usb->is_fixed &&
 	    length == dev->port_usb->fixed_in_len &&
 	    (length % in->maxpacket) == 0)
 		req->zero = 0;
@@ -589,20 +591,13 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 
 	req->length = length;
 
-	/* throttle high/super speed IRQ rate back slightly */
-	if (gadget_is_dualspeed(dev->gadget))
-		req->no_interrupt = (dev->gadget->speed == USB_SPEED_HIGH ||
-				     dev->gadget->speed == USB_SPEED_SUPER)
-			? ((atomic_read(&dev->tx_qlen) % dev->qmult) != 0)
-			: 0;
-
 	retval = usb_ep_queue(in, req, GFP_ATOMIC);
 	switch (retval) {
 	default:
 		DBG(dev, "tx queue err %d\n", retval);
 		break;
 	case 0:
-		net->trans_start = jiffies;
+		netif_trans_update(net);
 		atomic_inc(&dev->tx_qlen);
 	}
 
@@ -1067,6 +1062,7 @@ struct net_device *gether_connect(struct gether *link)
 
 	if (result == 0) {
 		dev->zlp = link->is_zlp_ok;
+		dev->no_skb_reserve = link->no_skb_reserve;
 		DBG(dev, "qlen %d\n", qlen(dev->gadget, dev->qmult));
 
 		dev->header_len = link->header_len;
@@ -1144,7 +1140,6 @@ void gether_disconnect(struct gether *link)
 		spin_lock(&dev->req_lock);
 	}
 	spin_unlock(&dev->req_lock);
-	link->in_ep->driver_data = NULL;
 	link->in_ep->desc = NULL;
 
 	usb_ep_disable(link->out_ep);
@@ -1159,7 +1154,6 @@ void gether_disconnect(struct gether *link)
 		spin_lock(&dev->req_lock);
 	}
 	spin_unlock(&dev->req_lock);
-	link->out_ep->driver_data = NULL;
 	link->out_ep->desc = NULL;
 
 	/* finish forgetting about this USB link episode */

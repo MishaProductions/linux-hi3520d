@@ -26,7 +26,6 @@
 
 #include <linux/fsnotify_backend.h>
 #include "fsnotify.h"
-#include "../mount.h"
 
 /*
  * Clear all of the marks on an inode when it is being evicted from core
@@ -102,19 +101,23 @@ int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
 	parent = dget_parent(dentry);
 	p_inode = parent->d_inode;
 
-	if (unlikely(!fsnotify_inode_watches_children(p_inode)))
+	if (unlikely(!fsnotify_inode_watches_children(p_inode))) {
 		__fsnotify_update_child_dentry_flags(p_inode);
-	else if (p_inode->i_fsnotify_mask & mask) {
+	} else if (p_inode->i_fsnotify_mask & mask & ~FS_EVENT_ON_CHILD) {
+		struct name_snapshot name;
+
 		/* we are notifying a parent so come up with the new mask which
 		 * specifies these are events which came from a child. */
 		mask |= FS_EVENT_ON_CHILD;
 
+		take_dentry_name_snapshot(&name, dentry);
 		if (path)
 			ret = fsnotify(p_inode, mask, path, FSNOTIFY_EVENT_PATH,
-				       dentry->d_name.name, 0);
+				       name.name, 0);
 		else
 			ret = fsnotify(p_inode, mask, dentry->d_inode, FSNOTIFY_EVENT_INODE,
-				       dentry->d_name.name, 0);
+				       name.name, 0);
+		release_dentry_name_snapshot(&name);
 	}
 
 	dput(parent);
@@ -204,6 +207,20 @@ int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
 	else
 		mnt = NULL;
 
+	/* An event "on child" is not intended for a mount mark */
+	if (mask & FS_EVENT_ON_CHILD)
+		mnt = NULL;
+
+	/*
+	 * Optimization: srcu_read_lock() has a memory barrier which can
+	 * be expensive.  It protects walking the *_fsnotify_marks lists.
+	 * However, if we do not walk the lists, we do not have to do
+	 * SRCU because we have no references to any objects and do not
+	 * need SRCU to keep them "alive".
+	 */
+	if (hlist_empty(&to_tell->i_fsnotify_marks) &&
+	    (!mnt || hlist_empty(&mnt->mnt_fsnotify_marks)))
+		return 0;
 	/*
 	 * if this is a modify event we may need to clear the ignored masks
 	 * otherwise return if neither the inode nor the vfsmount care about

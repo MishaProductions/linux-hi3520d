@@ -52,8 +52,12 @@ static int _hid_sensor_power_state(struct hid_sensor_common *st, bool state)
 
 		poll_value = hid_sensor_read_poll_value(st);
 	} else {
-		if (!atomic_dec_and_test(&st->data_ready))
+		int val;
+
+		val = atomic_dec_if_positive(&st->data_ready);
+		if (val < 0)
 			return 0;
+
 		sensor_hub_device_close(st->hsdev);
 		state_val = hid_sensor_get_usage_index(st->hsdev,
 			st->power_state.report_id,
@@ -68,20 +72,24 @@ static int _hid_sensor_power_state(struct hid_sensor_common *st, bool state)
 	if (state_val >= 0) {
 		state_val += st->power_state.logical_minimum;
 		sensor_hub_set_feature(st->hsdev, st->power_state.report_id,
-					st->power_state.index,
-					(s32)state_val);
+				       st->power_state.index, sizeof(state_val),
+				       &state_val);
 	}
 
 	if (report_val >= 0) {
 		report_val += st->report_state.logical_minimum;
 		sensor_hub_set_feature(st->hsdev, st->report_state.report_id,
-					st->report_state.index,
-					(s32)report_val);
+				       st->report_state.index,
+				       sizeof(report_val),
+				       &report_val);
 	}
 
+	pr_debug("HID_SENSOR %s set power_state %d report_state %d\n",
+		 st->pdev->name, state_val, report_val);
+
 	sensor_hub_get_feature(st->hsdev, st->power_state.report_id,
-					st->power_state.index,
-					&state_val);
+			       st->power_state.index,
+			       sizeof(state_val), &state_val);
 	if (state && poll_value)
 		msleep_interruptible(poll_value * 2);
 
@@ -91,13 +99,16 @@ EXPORT_SYMBOL(hid_sensor_power_state);
 
 int hid_sensor_power_state(struct hid_sensor_common *st, bool state)
 {
+
 #ifdef CONFIG_PM
 	int ret;
 
+	atomic_set(&st->user_requested_state, state);
 	if (state)
 		ret = pm_runtime_get_sync(&st->pdev->dev);
 	else {
 		pm_runtime_mark_last_busy(&st->pdev->dev);
+		pm_runtime_use_autosuspend(&st->pdev->dev);
 		ret = pm_runtime_put_autosuspend(&st->pdev->dev);
 	}
 	if (ret < 0) {
@@ -106,10 +117,33 @@ int hid_sensor_power_state(struct hid_sensor_common *st, bool state)
 		return ret;
 	}
 
- 	return 0;
+	return 0;
 #else
+	atomic_set(&st->user_requested_state, state);
 	return _hid_sensor_power_state(st, state);
 #endif
+}
+
+static void hid_sensor_set_power_work(struct work_struct *work)
+{
+	struct hid_sensor_common *attrb = container_of(work,
+						       struct hid_sensor_common,
+						       work);
+
+	if (attrb->poll_interval >= 0)
+		sensor_hub_set_feature(attrb->hsdev, attrb->poll.report_id,
+				       attrb->poll.index,
+				       sizeof(attrb->poll_interval),
+				       &attrb->poll_interval);
+
+	if (attrb->raw_hystersis >= 0)
+		sensor_hub_set_feature(attrb->hsdev,
+				       attrb->sensitivity.report_id,
+				       attrb->sensitivity.index,
+				       sizeof(attrb->raw_hystersis),
+				       &attrb->raw_hystersis);
+
+	_hid_sensor_power_state(attrb, true);
 }
 
 static int hid_sensor_data_rdy_trigger_set_state(struct iio_trigger *trig,
@@ -120,6 +154,7 @@ static int hid_sensor_data_rdy_trigger_set_state(struct iio_trigger *trig,
 
 void hid_sensor_remove_trigger(struct hid_sensor_common *attrb)
 {
+	cancel_work_sync(&attrb->work);
 	iio_trigger_unregister(attrb->trigger);
 	iio_trigger_free(attrb->trigger);
 }
@@ -160,13 +195,14 @@ int hid_sensor_setup_trigger(struct iio_dev *indio_dev, const char *name,
 		goto error_unreg_trigger;
 
 	iio_device_set_drvdata(indio_dev, attrb);
+
+	INIT_WORK(&attrb->work, hid_sensor_set_power_work);
+
 	pm_suspend_ignore_children(&attrb->pdev->dev, true);
 	pm_runtime_enable(&attrb->pdev->dev);
 	/* Default to 3 seconds, but can be changed from sysfs */
 	pm_runtime_set_autosuspend_delay(&attrb->pdev->dev,
 					 3000);
-	pm_runtime_use_autosuspend(&attrb->pdev->dev);
-
 	return ret;
 error_unreg_trigger:
 	iio_trigger_unregister(trig);
@@ -177,8 +213,7 @@ error_ret:
 }
 EXPORT_SYMBOL(hid_sensor_setup_trigger);
 
-#ifdef CONFIG_PM
-static int hid_sensor_suspend(struct device *dev)
+static int __maybe_unused hid_sensor_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
@@ -187,21 +222,27 @@ static int hid_sensor_suspend(struct device *dev)
 	return _hid_sensor_power_state(attrb, false);
 }
 
-static int hid_sensor_resume(struct device *dev)
+static int __maybe_unused hid_sensor_resume(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
 	struct hid_sensor_common *attrb = iio_device_get_drvdata(indio_dev);
-
-	return _hid_sensor_power_state(attrb, true);
+	schedule_work(&attrb->work);
+	return 0;
 }
 
-#endif
+static int __maybe_unused hid_sensor_runtime_resume(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
+	struct hid_sensor_common *attrb = iio_device_get_drvdata(indio_dev);
+	return _hid_sensor_power_state(attrb, true);
+}
 
 const struct dev_pm_ops hid_sensor_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(hid_sensor_suspend, hid_sensor_resume)
 	SET_RUNTIME_PM_OPS(hid_sensor_suspend,
-			   hid_sensor_resume, NULL)
+			   hid_sensor_runtime_resume, NULL)
 };
 EXPORT_SYMBOL(hid_sensor_pm_ops);
 

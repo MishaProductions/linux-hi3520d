@@ -79,6 +79,8 @@ static void w9968cf_write_fsb(struct sd *sd, u16* data)
 	value = *data++;
 	memcpy(sd->gspca_dev.usb_buf, data, 6);
 
+	/* Avoid things going to fast for the bridge with a xhci host */
+	udelay(150);
 	ret = usb_control_msg(udev, usb_sndctrlpipe(udev, 0), 0,
 			      USB_TYPE_VENDOR | USB_DIR_OUT | USB_RECIP_DEVICE,
 			      value, 0x06, sd->gspca_dev.usb_buf, 6, 500);
@@ -98,6 +100,9 @@ static void w9968cf_write_sb(struct sd *sd, u16 value)
 
 	if (sd->gspca_dev.usb_err < 0)
 		return;
+
+	/* Avoid things going to fast for the bridge with a xhci host */
+	udelay(150);
 
 	/* We don't use reg_w here, as that would cause all writes when
 	   bitbanging i2c to be logged, making the logs impossible to read */
@@ -126,6 +131,9 @@ static int w9968cf_read_sb(struct sd *sd)
 	if (sd->gspca_dev.usb_err < 0)
 		return -1;
 
+	/* Avoid things going to fast for the bridge with a xhci host */
+	udelay(150);
+
 	/* We don't use reg_r here, as the w9968cf is special and has 16
 	   bit registers instead of 8 bit */
 	ret = usb_control_msg(sd->gspca_dev.dev,
@@ -139,6 +147,11 @@ static int w9968cf_read_sb(struct sd *sd)
 	} else {
 		pr_err("Read SB reg [01] failed\n");
 		sd->gspca_dev.usb_err = ret;
+		/*
+		 * Make sure the buffer is zeroed to avoid uninitialized
+		 * values.
+		 */
+		memset(sd->gspca_dev.usb_buf, 0, 2);
 	}
 
 	udelay(W9968CF_I2C_BUS_DELAY);

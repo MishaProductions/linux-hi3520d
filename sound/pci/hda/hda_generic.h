@@ -46,7 +46,10 @@ struct nid_path {
 	unsigned char idx[MAX_NID_PATH_DEPTH];
 	unsigned char multi[MAX_NID_PATH_DEPTH];
 	unsigned int ctls[NID_PATH_NUM_CTLS]; /* NID_PATH_XXX_CTL */
-	bool active;
+	bool active:1;		/* activated by driver */
+	bool pin_enabled:1;	/* pins are enabled */
+	bool pin_fixed:1;	/* path with fixed pin */
+	bool stream_enabled:1;	/* stream is active */
 };
 
 /* mic/line-in auto switching entry */
@@ -144,7 +147,7 @@ struct hda_gen_spec {
 	int const_channel_count;	/* channel count for all */
 
 	/* PCM information */
-	struct hda_pcm pcm_rec[3];	/* used in build_pcms() */
+	struct hda_pcm *pcm_rec[3];	/* used in build_pcms() */
 
 	/* dynamic controls, init_verbs and input_mux */
 	struct auto_pin_cfg autocfg;
@@ -226,6 +229,7 @@ struct hda_gen_spec {
 	unsigned int add_jack_modes:1; /* add i/o jack mode enum ctls */
 	unsigned int power_down_unused:1; /* power down unused widgets */
 	unsigned int dac_min_mute:1; /* minimal = mute for DACs */
+	unsigned int obey_preferred_dacs:1; /* obey preferred_dacs assignment */
 
 	/* other internal flags */
 	unsigned int no_analog:1; /* digital I/O only */
@@ -233,6 +237,7 @@ struct hda_gen_spec {
 	unsigned int indep_hp_enabled:1; /* independent HP enabled */
 	unsigned int have_aamix_ctl:1;
 	unsigned int hp_mic_jack_modes:1;
+	unsigned int skip_verbs:1; /* don't apply verbs at snd_hda_gen_init() */
 
 	/* additional mute flags (only effective with auto_mute_via_amp=1) */
 	u64 mute_bits;
@@ -303,13 +308,8 @@ int snd_hda_gen_spec_init(struct hda_gen_spec *spec);
 int snd_hda_gen_init(struct hda_codec *codec);
 void snd_hda_gen_free(struct hda_codec *codec);
 
-struct nid_path *snd_hda_get_nid_path(struct hda_codec *codec,
-				      hda_nid_t from_nid, hda_nid_t to_nid);
 int snd_hda_get_path_idx(struct hda_codec *codec, struct nid_path *path);
 struct nid_path *snd_hda_get_path_from_idx(struct hda_codec *codec, int idx);
-bool snd_hda_parse_nid_path(struct hda_codec *codec, hda_nid_t from_nid,
-			    hda_nid_t to_nid, int anchor_nid,
-			    struct nid_path *path);
 struct nid_path *
 snd_hda_add_new_path(struct hda_codec *codec, hda_nid_t from_nid,
 		     hda_nid_t to_nid, int anchor_nid);
@@ -324,6 +324,7 @@ int snd_hda_gen_parse_auto_config(struct hda_codec *codec,
 				  struct auto_pin_cfg *cfg);
 int snd_hda_gen_build_controls(struct hda_codec *codec);
 int snd_hda_gen_build_pcms(struct hda_codec *codec);
+void snd_hda_gen_reboot_notify(struct hda_codec *codec);
 
 /* standard jack event callbacks */
 void snd_hda_gen_hp_automute(struct hda_codec *codec,
@@ -340,5 +341,7 @@ int snd_hda_gen_check_power_status(struct hda_codec *codec, hda_nid_t nid);
 unsigned int snd_hda_gen_path_power_filter(struct hda_codec *codec,
 					   hda_nid_t nid,
 					   unsigned int power_state);
+void snd_hda_gen_stream_pm(struct hda_codec *codec, hda_nid_t nid, bool on);
+int snd_hda_gen_fix_pin_power(struct hda_codec *codec, hda_nid_t pin);
 
 #endif /* __SOUND_HDA_GENERIC_H */

@@ -34,7 +34,6 @@
 #include <linux/of_device.h>
 
 #include <asm/irq.h>
-#include <mach/hardware.h>
 
 static DEFINE_MUTEX(ssp_lock);
 static LIST_HEAD(ssp_list);
@@ -107,7 +106,6 @@ static const struct of_device_id pxa_ssp_of_ids[] = {
 	{ .compatible = "mvrl,pxa168-ssp",	.data = (void *) PXA168_SSP },
 	{ .compatible = "mrvl,pxa910-ssp",	.data = (void *) PXA910_SSP },
 	{ .compatible = "mrvl,ce4100-ssp",	.data = (void *) CE4100_SSP },
-	{ .compatible = "mrvl,lpss-ssp",	.data = (void *) LPSS_SSP },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, pxa_ssp_of_ids);
@@ -232,25 +230,16 @@ static int pxa_ssp_probe(struct platform_device *pdev)
 
 static int pxa_ssp_remove(struct platform_device *pdev)
 {
-	struct resource *res;
 	struct ssp_device *ssp;
 
 	ssp = platform_get_drvdata(pdev);
 	if (ssp == NULL)
 		return -ENODEV;
 
-	iounmap(ssp->mmio_base);
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(res->start, resource_size(res));
-
-	clk_put(ssp->clk);
-
 	mutex_lock(&ssp_lock);
 	list_del(&ssp->node);
 	mutex_unlock(&ssp_lock);
 
-	kfree(ssp);
 	return 0;
 }
 

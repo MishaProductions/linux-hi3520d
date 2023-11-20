@@ -57,6 +57,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
+#include <linux/nospec.h>
 #include <linux/etherdevice.h>
 #include <linux/dvb/net.h>
 #include <linux/uio.h>
@@ -709,7 +710,7 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 					if (!priv->ule_dbit) {
 						 /* dest_addr buffer is only valid if priv->ule_dbit == 0 */
 						memcpy(ethh->h_dest, dest_addr, ETH_ALEN);
-						memset(ethh->h_source, 0, ETH_ALEN);
+						eth_zero_addr(ethh->h_source);
 					}
 					else /* zeroize source and dest */
 						memset( ethh, 0, ETH_ALEN*2 );
@@ -761,7 +762,7 @@ static void dvb_net_ule( struct net_device *dev, const u8 *buf, size_t buf_len )
 
 static int dvb_net_ts_callback(const u8 *buffer1, size_t buffer1_len,
 			       const u8 *buffer2, size_t buffer2_len,
-			       struct dmx_ts_feed *feed, enum dmx_success success)
+			       struct dmx_ts_feed *feed)
 {
 	struct net_device *dev = feed->priv;
 
@@ -870,8 +871,7 @@ static void dvb_net_sec(struct net_device *dev,
 
 static int dvb_net_sec_callback(const u8 *buffer1, size_t buffer1_len,
 		 const u8 *buffer2, size_t buffer2_len,
-		 struct dmx_section_filter *filter,
-		 enum dmx_success success)
+		 struct dmx_section_filter *filter)
 {
 	struct net_device *dev = filter->priv;
 
@@ -998,7 +998,7 @@ static int dvb_net_feed_start(struct net_device *dev)
 		netdev_dbg(dev, "start filtering\n");
 		priv->secfeed->start_filtering(priv->secfeed);
 	} else if (priv->feedtype == DVB_NET_FEEDTYPE_ULE) {
-		struct timespec timeout = { 0, 10000000 }; // 10 msec
+		ktime_t timeout = ns_to_ktime(10 * NSEC_PER_MSEC);
 
 		/* we have payloads encapsulated in TS */
 		netdev_dbg(dev, "alloc tsfeed\n");
@@ -1190,7 +1190,6 @@ static int dvb_net_stop(struct net_device *dev)
 static const struct header_ops dvb_header_ops = {
 	.create		= eth_header,
 	.parse		= eth_header_parse,
-	.rebuild	= eth_rebuild_header,
 };
 
 
@@ -1352,14 +1351,20 @@ static int dvb_net_do_ioctl(struct file *file,
 		struct net_device *netdev;
 		struct dvb_net_priv *priv_data;
 		struct dvb_net_if *dvbnetif = parg;
+		int if_num = dvbnetif->if_num;
 
-		if (dvbnetif->if_num >= DVB_NET_DEVICES_MAX ||
-		    !dvbnet->state[dvbnetif->if_num]) {
+		if (if_num >= DVB_NET_DEVICES_MAX) {
+			ret = -EINVAL;
+			goto ioctl_error;
+		}
+		if_num = array_index_nospec(if_num, DVB_NET_DEVICES_MAX);
+
+		if (!dvbnet->state[if_num]) {
 			ret = -EINVAL;
 			goto ioctl_error;
 		}
 
-		netdev = dvbnet->device[dvbnetif->if_num];
+		netdev = dvbnet->device[if_num];
 
 		priv_data = netdev_priv(netdev);
 		dvbnetif->pid=priv_data->pid;
@@ -1412,14 +1417,20 @@ static int dvb_net_do_ioctl(struct file *file,
 		struct net_device *netdev;
 		struct dvb_net_priv *priv_data;
 		struct __dvb_net_if_old *dvbnetif = parg;
+		int if_num = dvbnetif->if_num;
 
-		if (dvbnetif->if_num >= DVB_NET_DEVICES_MAX ||
-		    !dvbnet->state[dvbnetif->if_num]) {
+		if (if_num >= DVB_NET_DEVICES_MAX) {
+			ret = -EINVAL;
+			goto ioctl_error;
+		}
+		if_num = array_index_nospec(if_num, DVB_NET_DEVICES_MAX);
+
+		if (!dvbnet->state[if_num]) {
 			ret = -EINVAL;
 			goto ioctl_error;
 		}
 
-		netdev = dvbnet->device[dvbnetif->if_num];
+		netdev = dvbnet->device[if_num];
 
 		priv_data = netdev_priv(netdev);
 		dvbnetif->pid=priv_data->pid;
@@ -1462,13 +1473,15 @@ static const struct file_operations dvb_net_fops = {
 	.llseek = noop_llseek,
 };
 
-static struct dvb_device dvbdev_net = {
+static const struct dvb_device dvbdev_net = {
 	.priv = NULL,
 	.users = 1,
 	.writers = 1,
+#if defined(CONFIG_MEDIA_CONTROLLER_DVB)
+	.name = "dvb-net",
+#endif
 	.fops = &dvb_net_fops,
 };
-
 
 void dvb_net_release (struct dvb_net *dvbnet)
 {
@@ -1502,6 +1515,6 @@ int dvb_net_init (struct dvb_adapter *adap, struct dvb_net *dvbnet,
 		dvbnet->state[i] = 0;
 
 	return dvb_register_device(adap, &dvbnet->dvbdev, &dvbdev_net,
-			     dvbnet, DVB_DEVICE_NET);
+			     dvbnet, DVB_DEVICE_NET, 0);
 }
 EXPORT_SYMBOL(dvb_net_init);

@@ -923,7 +923,7 @@ static int apply_vp_patch(struct camera_data *cam)
 	/* ... followed by the data payload */
 	for (i = 2; i < fw->size; i += 64) {
 		cmd.start = 0x0C; /* Data */
-		cmd.reg_count = min_t(int, 64, fw->size - i);
+		cmd.reg_count = min_t(uint, 64, fw->size - i);
 		memcpy(cmd.buffer.block_data, &fw->data[i], cmd.reg_count);
 		cpia2_send_command(cam, &cmd);
 	}
@@ -2156,6 +2156,18 @@ static void reset_camera_struct(struct camera_data *cam)
 
 	cam->width = cam->params.roi.width;
 	cam->height = cam->params.roi.height;
+}
+
+/******************************************************************************
+ *
+ *  cpia2_init_camera_struct
+ *
+ *  Deinitialize camera struct
+ *****************************************************************************/
+void cpia2_deinit_camera_struct(struct camera_data *cam, struct usb_interface *intf)
+{
+	v4l2_device_unregister(&cam->v4l2_dev);
+	kfree(cam);
 }
 
 /******************************************************************************

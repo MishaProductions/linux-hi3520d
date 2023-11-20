@@ -278,12 +278,6 @@ static struct bus_type virtio_bus = {
 	.remove = virtio_dev_remove,
 };
 
-bool virtio_device_is_legacy_only(struct virtio_device_id id)
-{
-	return id.device == VIRTIO_ID_BALLOON;
-}
-EXPORT_SYMBOL_GPL(virtio_device_is_legacy_only);
-
 int register_virtio_driver(struct virtio_driver *driver)
 {
 	/* Catch this early. */
@@ -329,6 +323,8 @@ int register_virtio_device(struct virtio_device *dev)
 	/* device_register() causes the bus infrastructure to look for a
 	 * matching driver. */
 	err = device_register(&dev->dev);
+	if (err)
+		ida_simple_remove(&virtio_index_ida, dev->index);
 out:
 	if (err)
 		add_status(dev, VIRTIO_CONFIG_S_FAILED);
@@ -418,6 +414,7 @@ static int virtio_init(void)
 static void __exit virtio_exit(void)
 {
 	bus_unregister(&virtio_bus);
+	ida_destroy(&virtio_index_ida);
 }
 core_initcall(virtio_init);
 module_exit(virtio_exit);

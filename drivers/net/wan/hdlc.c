@@ -57,7 +57,15 @@ int hdlc_change_mtu(struct net_device *dev, int new_mtu)
 static int hdlc_rcv(struct sk_buff *skb, struct net_device *dev,
 		    struct packet_type *p, struct net_device *orig_dev)
 {
-	struct hdlc_device *hdlc = dev_to_hdlc(dev);
+	struct hdlc_device *hdlc;
+
+	/* First make sure "dev" is an HDLC device */
+	if (!(dev->priv_flags & IFF_WAN_HDLC)) {
+		kfree_skb(skb);
+		return NET_RX_SUCCESS;
+	}
+
+	hdlc = dev_to_hdlc(dev);
 
 	if (!net_eq(dev_net(dev), &init_net)) {
 		kfree_skb(skb);
@@ -266,8 +274,8 @@ struct net_device *alloc_hdlcdev(void *priv)
 void unregister_hdlc_device(struct net_device *dev)
 {
 	rtnl_lock();
-	unregister_netdevice(dev);
 	detach_hdlc_protocol(dev);
+	unregister_netdevice(dev);
 	rtnl_unlock();
 }
 
@@ -276,7 +284,11 @@ void unregister_hdlc_device(struct net_device *dev)
 int attach_hdlc_protocol(struct net_device *dev, struct hdlc_proto *proto,
 			 size_t size)
 {
-	detach_hdlc_protocol(dev);
+	int err;
+
+	err = detach_hdlc_protocol(dev);
+	if (err)
+		return err;
 
 	if (!try_module_get(proto->module))
 		return -ENOSYS;
@@ -289,15 +301,24 @@ int attach_hdlc_protocol(struct net_device *dev, struct hdlc_proto *proto,
 		}
 	}
 	dev_to_hdlc(dev)->proto = proto;
+
 	return 0;
 }
 
 
-void detach_hdlc_protocol(struct net_device *dev)
+int detach_hdlc_protocol(struct net_device *dev)
 {
 	hdlc_device *hdlc = dev_to_hdlc(dev);
+	int err;
 
 	if (hdlc->proto) {
+		err = call_netdevice_notifiers(NETDEV_PRE_TYPE_CHANGE, dev);
+		err = notifier_to_errno(err);
+		if (err) {
+			netdev_err(dev, "Refused to change device type\n");
+			return err;
+		}
+
 		if (hdlc->proto->detach)
 			hdlc->proto->detach(dev);
 		module_put(hdlc->proto->module);
@@ -306,6 +327,8 @@ void detach_hdlc_protocol(struct net_device *dev)
 	kfree(hdlc->state);
 	hdlc->state = NULL;
 	hdlc_setup_dev(dev);
+
+	return 0;
 }
 
 

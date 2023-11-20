@@ -139,6 +139,7 @@ static bool mrst_sdvo_find_best_pll(const struct gma_limit_t *limit,
 	s32 freq_error, min_error = 100000;
 
 	memset(best_clock, 0, sizeof(*best_clock));
+	memset(&clock, 0, sizeof(clock));
 
 	for (clock.m = limit->m.min; clock.m <= limit->m.max; clock.m++) {
 		for (clock.n = limit->n.min; clock.n <= limit->n.max;
@@ -195,6 +196,7 @@ static bool mrst_lvds_find_best_pll(const struct gma_limit_t *limit,
 	int err = target;
 
 	memset(best_clock, 0, sizeof(*best_clock));
+	memset(&clock, 0, sizeof(clock));
 
 	for (clock.m = limit->m.min; clock.m <= limit->m.max; clock.m++) {
 		for (clock.p1 = limit->p1.min; clock.p1 <= limit->p1.max;
@@ -483,7 +485,7 @@ static int oaktrail_crtc_mode_set(struct drm_crtc *crtc,
 
 	/* Flush the plane changes */
 	{
-		struct drm_crtc_helper_funcs *crtc_funcs =
+		const struct drm_crtc_helper_funcs *crtc_funcs =
 		    crtc->helper_private;
 		crtc_funcs->mode_set_base(crtc, x, y, old_fb);
 	}
@@ -657,7 +659,6 @@ pipe_set_base_exit:
 
 const struct drm_crtc_helper_funcs oaktrail_helper_funcs = {
 	.dpms = oaktrail_crtc_dpms,
-	.mode_fixup = gma_crtc_mode_fixup,
 	.mode_set = oaktrail_crtc_mode_set,
 	.mode_set_base = oaktrail_pipe_set_base,
 	.prepare = gma_crtc_prepare,

@@ -202,9 +202,10 @@ static int s5m8767_get_register(struct s5m8767_info *s5m8767, int reg_id,
 		}
 	}
 
-	if (i < s5m8767->num_regulators)
-		*enable_ctrl =
-		s5m8767_opmode_reg[reg_id][mode] << S5M8767_ENCTRL_SHIFT;
+	if (i >= s5m8767->num_regulators)
+		return -EINVAL;
+
+	*enable_ctrl = s5m8767_opmode_reg[reg_id][mode] << S5M8767_ENCTRL_SHIFT;
 
 	return 0;
 }
@@ -844,18 +845,15 @@ static int s5m8767_pmic_probe(struct platform_device *pdev)
 	/* DS4 GPIO */
 	gpio_direction_output(pdata->buck_ds[2], 0x0);
 
-	if (pdata->buck2_gpiodvs || pdata->buck3_gpiodvs ||
-	   pdata->buck4_gpiodvs) {
-		regmap_update_bits(s5m8767->iodev->regmap_pmic,
-				S5M8767_REG_BUCK2CTRL, 1 << 1,
-				(pdata->buck2_gpiodvs) ? (1 << 1) : (0 << 1));
-		regmap_update_bits(s5m8767->iodev->regmap_pmic,
-				S5M8767_REG_BUCK3CTRL, 1 << 1,
-				(pdata->buck3_gpiodvs) ? (1 << 1) : (0 << 1));
-		regmap_update_bits(s5m8767->iodev->regmap_pmic,
-				S5M8767_REG_BUCK4CTRL, 1 << 1,
-				(pdata->buck4_gpiodvs) ? (1 << 1) : (0 << 1));
-	}
+	regmap_update_bits(s5m8767->iodev->regmap_pmic,
+			   S5M8767_REG_BUCK2CTRL, 1 << 1,
+			   (pdata->buck2_gpiodvs) ? (1 << 1) : (0 << 1));
+	regmap_update_bits(s5m8767->iodev->regmap_pmic,
+			   S5M8767_REG_BUCK3CTRL, 1 << 1,
+			   (pdata->buck3_gpiodvs) ? (1 << 1) : (0 << 1));
+	regmap_update_bits(s5m8767->iodev->regmap_pmic,
+			   S5M8767_REG_BUCK4CTRL, 1 << 1,
+			   (pdata->buck4_gpiodvs) ? (1 << 1) : (0 << 1));
 
 	/* Initialize GPIO DVS registers */
 	for (i = 0; i < 8; i++) {
@@ -937,8 +935,12 @@ static int s5m8767_pmic_probe(struct platform_device *pdev)
 			else
 				regulators[id].vsel_mask = 0xff;
 
-			s5m8767_get_register(s5m8767, id, &enable_reg,
+			ret = s5m8767_get_register(s5m8767, id, &enable_reg,
 					     &enable_val);
+			if (ret) {
+				dev_err(s5m8767->dev, "error reading registers\n");
+				return ret;
+			}
 			regulators[id].enable_reg = enable_reg;
 			regulators[id].enable_mask = S5M8767_ENCTRL_MASK;
 			regulators[id].enable_val = enable_val;

@@ -147,6 +147,15 @@ unsigned long arch_uretprobe_hijack_return_addr(unsigned long trampoline,
 	return orig;
 }
 
+bool arch_uretprobe_is_alive(struct return_instance *ret, enum rp_check ctx,
+			     struct pt_regs *regs)
+{
+	if (ctx == RP_CHECK_CHAIN_CALL)
+		return user_stack_pointer(regs) <= ret->stack;
+	else
+		return user_stack_pointer(regs) < ret->stack;
+}
+
 /* Instruction Emulation */
 
 static void adjust_psw_addr(psw_t *psw, unsigned long len)
@@ -188,7 +197,9 @@ static void adjust_psw_addr(psw_t *psw, unsigned long len)
 	else if (put_user(*(input), __ptr))		\
 		__rc = EMU_ADDRESSING;			\
 	if (__rc == 0)					\
-		sim_stor_event(regs, __ptr, mask + 1);	\
+		sim_stor_event(regs,			\
+			       (void __force *)__ptr,	\
+			       mask + 1);		\
 	__rc;						\
 })
 

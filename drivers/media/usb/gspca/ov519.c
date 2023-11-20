@@ -360,40 +360,6 @@ static const struct v4l2_pix_format ov511_sif_mode[] = {
 		.priv = 0},
 };
 
-static const struct v4l2_pix_format ovfx2_vga_mode[] = {
-	{320, 240, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
-		.bytesperline = 320,
-		.sizeimage = 320 * 240,
-		.colorspace = V4L2_COLORSPACE_SRGB,
-		.priv = 1},
-	{640, 480, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
-		.bytesperline = 640,
-		.sizeimage = 640 * 480,
-		.colorspace = V4L2_COLORSPACE_SRGB,
-		.priv = 0},
-};
-static const struct v4l2_pix_format ovfx2_cif_mode[] = {
-	{160, 120, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
-		.bytesperline = 160,
-		.sizeimage = 160 * 120,
-		.colorspace = V4L2_COLORSPACE_SRGB,
-		.priv = 3},
-	{176, 144, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
-		.bytesperline = 176,
-		.sizeimage = 176 * 144,
-		.colorspace = V4L2_COLORSPACE_SRGB,
-		.priv = 1},
-	{320, 240, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
-		.bytesperline = 320,
-		.sizeimage = 320 * 240,
-		.colorspace = V4L2_COLORSPACE_SRGB,
-		.priv = 2},
-	{352, 288, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
-		.bytesperline = 352,
-		.sizeimage = 352 * 288,
-		.colorspace = V4L2_COLORSPACE_SRGB,
-		.priv = 0},
-};
 static const struct v4l2_pix_format ovfx2_ov2610_mode[] = {
 	{800, 600, V4L2_PIX_FMT_SBGGR8, V4L2_FIELD_NONE,
 		.bytesperline = 800,
@@ -2042,6 +2008,9 @@ static void reg_w(struct sd *sd, u16 index, u16 value)
 	if (sd->gspca_dev.usb_err < 0)
 		return;
 
+	/* Avoid things going to fast for the bridge with a xhci host */
+	udelay(150);
+
 	switch (sd->bridge) {
 	case BRIDGE_OV511:
 	case BRIDGE_OV511PLUS:
@@ -2103,6 +2072,8 @@ static int reg_r(struct sd *sd, u16 index)
 		req = 1;
 	}
 
+	/* Avoid things going to fast for the bridge with a xhci host */
+	udelay(150);
 	ret = usb_control_msg(sd->gspca_dev.dev,
 			usb_rcvctrlpipe(sd->gspca_dev.dev, 0),
 			req,
@@ -2116,6 +2087,11 @@ static int reg_r(struct sd *sd, u16 index)
 	} else {
 		PERR("reg_r %02x failed %d\n", index, ret);
 		sd->gspca_dev.usb_err = ret;
+		/*
+		 * Make sure the result is zeroed to avoid uninitialized
+		 * values.
+		 */
+		gspca_dev->usb_buf[0] = 0;
 	}
 
 	return ret;
@@ -2131,6 +2107,8 @@ static int reg_r8(struct sd *sd,
 	if (sd->gspca_dev.usb_err < 0)
 		return -1;
 
+	/* Avoid things going to fast for the bridge with a xhci host */
+	udelay(150);
 	ret = usb_control_msg(sd->gspca_dev.dev,
 			usb_rcvctrlpipe(sd->gspca_dev.dev, 0),
 			1,			/* REQ_IO */
@@ -2142,6 +2120,11 @@ static int reg_r8(struct sd *sd,
 	} else {
 		PERR("reg_r8 %02x failed %d\n", index, ret);
 		sd->gspca_dev.usb_err = ret;
+		/*
+		 * Make sure the buffer is zeroed to avoid uninitialized
+		 * values.
+		 */
+		memset(gspca_dev->usb_buf, 0, 8);
 	}
 
 	return ret;
@@ -2187,6 +2170,8 @@ static void ov518_reg_w32(struct sd *sd, u16 index, u32 value, int n)
 
 	*((__le32 *) sd->gspca_dev.usb_buf) = __cpu_to_le32(value);
 
+	/* Avoid things going to fast for the bridge with a xhci host */
+	udelay(150);
 	ret = usb_control_msg(sd->gspca_dev.dev,
 			usb_sndctrlpipe(sd->gspca_dev.dev, 0),
 			1 /* REG_IO */,
@@ -3497,6 +3482,11 @@ static void ov511_mode_init_regs(struct sd *sd)
 		return;
 	}
 
+	if (alt->desc.bNumEndpoints < 1) {
+		sd->gspca_dev.usb_err = -ENODEV;
+		return;
+	}
+
 	packet_size = le16_to_cpu(alt->endpoint[0].desc.wMaxPacketSize);
 	reg_w(sd, R51x_FIFO_PSIZE, packet_size >> 5);
 
@@ -3619,6 +3609,11 @@ static void ov518_mode_init_regs(struct sd *sd)
 	if (!alt) {
 		PERR("Couldn't get altsetting\n");
 		sd->gspca_dev.usb_err = -EIO;
+		return;
+	}
+
+	if (alt->desc.bNumEndpoints < 1) {
+		sd->gspca_dev.usb_err = -ENODEV;
 		return;
 	}
 

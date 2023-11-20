@@ -53,6 +53,8 @@
 #include <linux/uidgid.h>
 #include <linux/cred.h>
 
+#include <linux/nospec.h>
+
 #include <linux/kmsg_dump.h>
 /* Move somewhere else to avoid recompiling? */
 #include <generated/utsrelease.h>
@@ -92,10 +94,10 @@
 # define SET_TSC_CTL(a)		(-EINVAL)
 #endif
 #ifndef MPX_ENABLE_MANAGEMENT
-# define MPX_ENABLE_MANAGEMENT(a)	(-EINVAL)
+# define MPX_ENABLE_MANAGEMENT()	(-EINVAL)
 #endif
 #ifndef MPX_DISABLE_MANAGEMENT
-# define MPX_DISABLE_MANAGEMENT(a)	(-EINVAL)
+# define MPX_DISABLE_MANAGEMENT()	(-EINVAL)
 #endif
 #ifndef GET_FP_MODE
 # define GET_FP_MODE(a)		(-EINVAL)
@@ -222,7 +224,7 @@ SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 				goto out_unlock;	/* No processes for this user */
 		}
 		do_each_thread(g, p) {
-			if (uid_eq(task_uid(p), uid))
+			if (uid_eq(task_uid(p), uid) && task_pid_vnr(p))
 				error = set_one_prio(p, niceval, error);
 		} while_each_thread(g, p);
 		if (!uid_eq(uid, cred->uid))
@@ -290,7 +292,7 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 				goto out_unlock;	/* No processes for this user */
 		}
 		do_each_thread(g, p) {
-			if (uid_eq(task_uid(p), uid)) {
+			if (uid_eq(task_uid(p), uid) && task_pid_vnr(p)) {
 				niceval = nice_to_rlimit(task_nice(p));
 				if (niceval > retval)
 					retval = niceval;
@@ -325,6 +327,7 @@ out_unlock:
  * SMP: There are not races, the GIDs are checked only by filesystem
  *      operations (as far as semantic preservation is concerned).
  */
+#ifdef CONFIG_MULTIUSER
 SYSCALL_DEFINE2(setregid, gid_t, rgid, gid_t, egid)
 {
 	struct user_namespace *ns = current_user_ns();
@@ -815,6 +818,7 @@ change_okay:
 	commit_creds(new);
 	return old_fsgid;
 }
+#endif /* CONFIG_MULTIUSER */
 
 /**
  * sys_getpid - return the thread group id of the current process
@@ -1138,18 +1142,19 @@ static int override_release(char __user *release, size_t len)
 
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
-	int errno = 0;
+	struct new_utsname tmp;
 
 	down_read(&uts_sem);
-	if (copy_to_user(name, utsname(), sizeof *name))
-		errno = -EFAULT;
+	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
+	if (copy_to_user(name, &tmp, sizeof(tmp)))
+		return -EFAULT;
 
-	if (!errno && override_release(name->release, sizeof(name->release)))
-		errno = -EFAULT;
-	if (!errno && override_architecture(name))
-		errno = -EFAULT;
-	return errno;
+	if (override_release(name->release, sizeof(name->release)))
+		return -EFAULT;
+	if (override_architecture(name))
+		return -EFAULT;
+	return 0;
 }
 
 #ifdef __ARCH_WANT_SYS_OLD_UNAME
@@ -1158,55 +1163,48 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
  */
 SYSCALL_DEFINE1(uname, struct old_utsname __user *, name)
 {
-	int error = 0;
+	struct old_utsname tmp;
 
 	if (!name)
 		return -EFAULT;
 
 	down_read(&uts_sem);
-	if (copy_to_user(name, utsname(), sizeof(*name)))
-		error = -EFAULT;
+	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
+	if (copy_to_user(name, &tmp, sizeof(tmp)))
+		return -EFAULT;
 
-	if (!error && override_release(name->release, sizeof(name->release)))
-		error = -EFAULT;
-	if (!error && override_architecture(name))
-		error = -EFAULT;
-	return error;
+	if (override_release(name->release, sizeof(name->release)))
+		return -EFAULT;
+	if (override_architecture(name))
+		return -EFAULT;
+	return 0;
 }
 
 SYSCALL_DEFINE1(olduname, struct oldold_utsname __user *, name)
 {
-	int error;
+	struct oldold_utsname tmp;
 
 	if (!name)
 		return -EFAULT;
-	if (!access_ok(VERIFY_WRITE, name, sizeof(struct oldold_utsname)))
-		return -EFAULT;
+
+	memset(&tmp, 0, sizeof(tmp));
 
 	down_read(&uts_sem);
-	error = __copy_to_user(&name->sysname, &utsname()->sysname,
-			       __OLD_UTS_LEN);
-	error |= __put_user(0, name->sysname + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->nodename, &utsname()->nodename,
-				__OLD_UTS_LEN);
-	error |= __put_user(0, name->nodename + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->release, &utsname()->release,
-				__OLD_UTS_LEN);
-	error |= __put_user(0, name->release + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->version, &utsname()->version,
-				__OLD_UTS_LEN);
-	error |= __put_user(0, name->version + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->machine, &utsname()->machine,
-				__OLD_UTS_LEN);
-	error |= __put_user(0, name->machine + __OLD_UTS_LEN);
+	memcpy(&tmp.sysname, &utsname()->sysname, __OLD_UTS_LEN);
+	memcpy(&tmp.nodename, &utsname()->nodename, __OLD_UTS_LEN);
+	memcpy(&tmp.release, &utsname()->release, __OLD_UTS_LEN);
+	memcpy(&tmp.version, &utsname()->version, __OLD_UTS_LEN);
+	memcpy(&tmp.machine, &utsname()->machine, __OLD_UTS_LEN);
 	up_read(&uts_sem);
+	if (copy_to_user(name, &tmp, sizeof(tmp)))
+		return -EFAULT;
 
-	if (!error && override_architecture(name))
-		error = -EFAULT;
-	if (!error && override_release(name->release, sizeof(name->release)))
-		error = -EFAULT;
-	return error ? -EFAULT : 0;
+	if (override_architecture(name))
+		return -EFAULT;
+	if (override_release(name->release, sizeof(name->release)))
+		return -EFAULT;
+	return 0;
 }
 #endif
 
@@ -1220,17 +1218,18 @@ SYSCALL_DEFINE2(sethostname, char __user *, name, int, len)
 
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;
-	down_write(&uts_sem);
 	errno = -EFAULT;
 	if (!copy_from_user(tmp, name, len)) {
-		struct new_utsname *u = utsname();
+		struct new_utsname *u;
 
+		down_write(&uts_sem);
+		u = utsname();
 		memcpy(u->nodename, tmp, len);
 		memset(u->nodename + len, 0, sizeof(u->nodename) - len);
 		errno = 0;
 		uts_proc_notify(UTS_PROC_HOSTNAME);
+		up_write(&uts_sem);
 	}
-	up_write(&uts_sem);
 	return errno;
 }
 
@@ -1238,8 +1237,9 @@ SYSCALL_DEFINE2(sethostname, char __user *, name, int, len)
 
 SYSCALL_DEFINE2(gethostname, char __user *, name, int, len)
 {
-	int i, errno;
+	int i;
 	struct new_utsname *u;
+	char tmp[__NEW_UTS_LEN + 1];
 
 	if (len < 0)
 		return -EINVAL;
@@ -1248,11 +1248,11 @@ SYSCALL_DEFINE2(gethostname, char __user *, name, int, len)
 	i = 1 + strlen(u->nodename);
 	if (i > len)
 		i = len;
-	errno = 0;
-	if (copy_to_user(name, u->nodename, i))
-		errno = -EFAULT;
+	memcpy(tmp, u->nodename, i);
 	up_read(&uts_sem);
-	return errno;
+	if (copy_to_user(name, tmp, i))
+		return -EFAULT;
+	return 0;
 }
 
 #endif
@@ -1271,17 +1271,18 @@ SYSCALL_DEFINE2(setdomainname, char __user *, name, int, len)
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;
 
-	down_write(&uts_sem);
 	errno = -EFAULT;
 	if (!copy_from_user(tmp, name, len)) {
-		struct new_utsname *u = utsname();
+		struct new_utsname *u;
 
+		down_write(&uts_sem);
+		u = utsname();
 		memcpy(u->domainname, tmp, len);
 		memset(u->domainname + len, 0, sizeof(u->domainname) - len);
 		errno = 0;
 		uts_proc_notify(UTS_PROC_DOMAINNAME);
+		up_write(&uts_sem);
 	}
-	up_write(&uts_sem);
 	return errno;
 }
 
@@ -1309,6 +1310,7 @@ SYSCALL_DEFINE2(old_getrlimit, unsigned int, resource,
 	if (resource >= RLIM_NLIMITS)
 		return -EINVAL;
 
+	resource = array_index_nospec(resource, RLIM_NLIMITS);
 	task_lock(current->group_leader);
 	x = current->signal->rlim[resource];
 	task_unlock(current->group_leader);
@@ -1647,13 +1649,12 @@ SYSCALL_DEFINE1(umask, int, mask)
 	return mask;
 }
 
-static int prctl_set_mm_exe_file_locked(struct mm_struct *mm, unsigned int fd)
+static int prctl_set_mm_exe_file(struct mm_struct *mm, unsigned int fd)
 {
 	struct fd exe;
+	struct file *old_exe, *exe_file;
 	struct inode *inode;
 	int err;
-
-	VM_BUG_ON_MM(!rwsem_is_locked(&mm->mmap_sem), mm);
 
 	exe = fdget(fd);
 	if (!exe.file)
@@ -1667,8 +1668,7 @@ static int prctl_set_mm_exe_file_locked(struct mm_struct *mm, unsigned int fd)
 	 * overall picture.
 	 */
 	err = -EACCES;
-	if (!S_ISREG(inode->i_mode)	||
-	    exe.file->f_path.mnt->mnt_flags & MNT_NOEXEC)
+	if (!S_ISREG(inode->i_mode) || path_noexec(&exe.file->f_path))
 		goto exit;
 
 	err = inode_permission(inode, MAY_EXEC);
@@ -1678,15 +1678,22 @@ static int prctl_set_mm_exe_file_locked(struct mm_struct *mm, unsigned int fd)
 	/*
 	 * Forbid mm->exe_file change if old file still mapped.
 	 */
+	exe_file = get_mm_exe_file(mm);
 	err = -EBUSY;
-	if (mm->exe_file) {
+	if (exe_file) {
 		struct vm_area_struct *vma;
 
-		for (vma = mm->mmap; vma; vma = vma->vm_next)
-			if (vma->vm_file &&
-			    path_equal(&vma->vm_file->f_path,
-				       &mm->exe_file->f_path))
-				goto exit;
+		down_read(&mm->mmap_sem);
+		for (vma = mm->mmap; vma; vma = vma->vm_next) {
+			if (!vma->vm_file)
+				continue;
+			if (path_equal(&vma->vm_file->f_path,
+				       &exe_file->f_path))
+				goto exit_err;
+		}
+
+		up_read(&mm->mmap_sem);
+		fput(exe_file);
 	}
 
 	/*
@@ -1700,13 +1707,20 @@ static int prctl_set_mm_exe_file_locked(struct mm_struct *mm, unsigned int fd)
 		goto exit;
 
 	err = 0;
-	set_mm_exe_file(mm, exe.file);	/* this grabs a reference to exe.file */
+	/* set the new file, lockless */
+	get_file(exe.file);
+	old_exe = xchg(&mm->exe_file, exe.file);
+	if (old_exe)
+		fput(old_exe);
 exit:
 	fdput(exe);
 	return err;
+exit_err:
+	up_read(&mm->mmap_sem);
+	fput(exe_file);
+	goto exit;
 }
 
-#ifdef CONFIG_CHECKPOINT_RESTORE
 /*
  * WARNING: we don't require any capability here so be very careful
  * in what is allowed for modification from userspace.
@@ -1750,7 +1764,7 @@ static int validate_prctl_map(struct prctl_mm_map *prctl_map)
 	((unsigned long)prctl_map->__m1 __op				\
 	 (unsigned long)prctl_map->__m2) ? 0 : -EINVAL
 	error  = __prctl_check_order(start_code, <, end_code);
-	error |= __prctl_check_order(start_data, <, end_data);
+	error |= __prctl_check_order(start_data,<=, end_data);
 	error |= __prctl_check_order(start_brk, <=, brk);
 	error |= __prctl_check_order(arg_start, <=, arg_end);
 	error |= __prctl_check_order(env_start, <=, env_end);
@@ -1759,13 +1773,6 @@ static int validate_prctl_map(struct prctl_mm_map *prctl_map)
 #undef __prctl_check_order
 
 	error = -EINVAL;
-
-	/*
-	 * @brk should be after @end_data in traditional maps.
-	 */
-	if (prctl_map->start_brk <= prctl_map->end_data ||
-	    prctl_map->brk <= prctl_map->end_data)
-		goto out;
 
 	/*
 	 * Neither we should allow to override limits if they set.
@@ -1802,6 +1809,7 @@ out:
 	return error;
 }
 
+#ifdef CONFIG_CHECKPOINT_RESTORE
 static int prctl_set_mm_map(int opt, const void __user *addr, unsigned long data_size)
 {
 	struct prctl_mm_map prctl_map = { .exe_fd = (u32)-1, };
@@ -1838,12 +1846,13 @@ static int prctl_set_mm_map(int opt, const void __user *addr, unsigned long data
 		user_auxv[AT_VECTOR_SIZE - 1] = AT_NULL;
 	}
 
+	if (prctl_map.exe_fd != (u32)-1) {
+		error = prctl_set_mm_exe_file(mm, prctl_map.exe_fd);
+		if (error)
+			return error;
+	}
+
 	down_write(&mm->mmap_sem);
-	if (prctl_map.exe_fd != (u32)-1)
-		error = prctl_set_mm_exe_file_locked(mm, prctl_map.exe_fd);
-	downgrade_write(&mm->mmap_sem);
-	if (error)
-		goto out;
 
 	/*
 	 * We don't validate if these members are pointing to
@@ -1880,17 +1889,46 @@ static int prctl_set_mm_map(int opt, const void __user *addr, unsigned long data
 	if (prctl_map.auxv_size)
 		memcpy(mm->saved_auxv, user_auxv, sizeof(user_auxv));
 
-	error = 0;
-out:
-	up_read(&mm->mmap_sem);
-	return error;
+	up_write(&mm->mmap_sem);
+	return 0;
 }
 #endif /* CONFIG_CHECKPOINT_RESTORE */
+
+static int prctl_set_auxv(struct mm_struct *mm, unsigned long addr,
+			  unsigned long len)
+{
+	/*
+	 * This doesn't move the auxiliary vector itself since it's pinned to
+	 * mm_struct, but it permits filling the vector with new values.  It's
+	 * up to the caller to provide sane values here, otherwise userspace
+	 * tools which use this vector might be unhappy.
+	 */
+	unsigned long user_auxv[AT_VECTOR_SIZE];
+
+	if (len > sizeof(user_auxv))
+		return -EINVAL;
+
+	if (copy_from_user(user_auxv, (const void __user *)addr, len))
+		return -EFAULT;
+
+	/* Make sure the last entry is always AT_NULL */
+	user_auxv[AT_VECTOR_SIZE - 2] = 0;
+	user_auxv[AT_VECTOR_SIZE - 1] = 0;
+
+	BUILD_BUG_ON(sizeof(user_auxv) != sizeof(mm->saved_auxv));
+
+	task_lock(current);
+	memcpy(mm->saved_auxv, user_auxv, len);
+	task_unlock(current);
+
+	return 0;
+}
 
 static int prctl_set_mm(int opt, unsigned long addr,
 			unsigned long arg4, unsigned long arg5)
 {
 	struct mm_struct *mm = current->mm;
+	struct prctl_mm_map prctl_map;
 	struct vm_area_struct *vma;
 	int error;
 
@@ -1907,57 +1945,78 @@ static int prctl_set_mm(int opt, unsigned long addr,
 	if (!capable(CAP_SYS_RESOURCE))
 		return -EPERM;
 
-	if (opt == PR_SET_MM_EXE_FILE) {
-		down_write(&mm->mmap_sem);
-		error = prctl_set_mm_exe_file_locked(mm, (unsigned int)addr);
-		up_write(&mm->mmap_sem);
-		return error;
-	}
+	if (opt == PR_SET_MM_EXE_FILE)
+		return prctl_set_mm_exe_file(mm, (unsigned int)addr);
+
+	if (opt == PR_SET_MM_AUXV)
+		return prctl_set_auxv(mm, addr, arg4);
 
 	if (addr >= TASK_SIZE || addr < mmap_min_addr)
 		return -EINVAL;
 
 	error = -EINVAL;
 
-	down_read(&mm->mmap_sem);
+	down_write(&mm->mmap_sem);
 	vma = find_vma(mm, addr);
+
+	prctl_map.start_code	= mm->start_code;
+	prctl_map.end_code	= mm->end_code;
+	prctl_map.start_data	= mm->start_data;
+	prctl_map.end_data	= mm->end_data;
+	prctl_map.start_brk	= mm->start_brk;
+	prctl_map.brk		= mm->brk;
+	prctl_map.start_stack	= mm->start_stack;
+	prctl_map.arg_start	= mm->arg_start;
+	prctl_map.arg_end	= mm->arg_end;
+	prctl_map.env_start	= mm->env_start;
+	prctl_map.env_end	= mm->env_end;
+	prctl_map.auxv		= NULL;
+	prctl_map.auxv_size	= 0;
+	prctl_map.exe_fd	= -1;
 
 	switch (opt) {
 	case PR_SET_MM_START_CODE:
-		mm->start_code = addr;
+		prctl_map.start_code = addr;
 		break;
 	case PR_SET_MM_END_CODE:
-		mm->end_code = addr;
+		prctl_map.end_code = addr;
 		break;
 	case PR_SET_MM_START_DATA:
-		mm->start_data = addr;
+		prctl_map.start_data = addr;
 		break;
 	case PR_SET_MM_END_DATA:
-		mm->end_data = addr;
+		prctl_map.end_data = addr;
 		break;
-
+	case PR_SET_MM_START_STACK:
+		prctl_map.start_stack = addr;
+		break;
 	case PR_SET_MM_START_BRK:
-		if (addr <= mm->end_data)
-			goto out;
-
-		if (check_data_rlimit(rlimit(RLIMIT_DATA), mm->brk, addr,
-				      mm->end_data, mm->start_data))
-			goto out;
-
-		mm->start_brk = addr;
+		prctl_map.start_brk = addr;
 		break;
-
 	case PR_SET_MM_BRK:
-		if (addr <= mm->end_data)
-			goto out;
-
-		if (check_data_rlimit(rlimit(RLIMIT_DATA), addr, mm->start_brk,
-				      mm->end_data, mm->start_data))
-			goto out;
-
-		mm->brk = addr;
+		prctl_map.brk = addr;
 		break;
+	case PR_SET_MM_ARG_START:
+		prctl_map.arg_start = addr;
+		break;
+	case PR_SET_MM_ARG_END:
+		prctl_map.arg_end = addr;
+		break;
+	case PR_SET_MM_ENV_START:
+		prctl_map.env_start = addr;
+		break;
+	case PR_SET_MM_ENV_END:
+		prctl_map.env_end = addr;
+		break;
+	default:
+		goto out;
+	}
 
+	error = validate_prctl_map(&prctl_map);
+	if (error)
+		goto out;
+
+	switch (opt) {
 	/*
 	 * If command line arguments and environment
 	 * are placed somewhere else on stack, we can
@@ -1974,55 +2033,23 @@ static int prctl_set_mm(int opt, unsigned long addr,
 			error = -EFAULT;
 			goto out;
 		}
-		if (opt == PR_SET_MM_START_STACK)
-			mm->start_stack = addr;
-		else if (opt == PR_SET_MM_ARG_START)
-			mm->arg_start = addr;
-		else if (opt == PR_SET_MM_ARG_END)
-			mm->arg_end = addr;
-		else if (opt == PR_SET_MM_ENV_START)
-			mm->env_start = addr;
-		else if (opt == PR_SET_MM_ENV_END)
-			mm->env_end = addr;
-		break;
-
-	/*
-	 * This doesn't move auxiliary vector itself
-	 * since it's pinned to mm_struct, but allow
-	 * to fill vector with new values. It's up
-	 * to a caller to provide sane values here
-	 * otherwise user space tools which use this
-	 * vector might be unhappy.
-	 */
-	case PR_SET_MM_AUXV: {
-		unsigned long user_auxv[AT_VECTOR_SIZE];
-
-		if (arg4 > sizeof(user_auxv))
-			goto out;
-		up_read(&mm->mmap_sem);
-
-		if (copy_from_user(user_auxv, (const void __user *)addr, arg4))
-			return -EFAULT;
-
-		/* Make sure the last entry is always AT_NULL */
-		user_auxv[AT_VECTOR_SIZE - 2] = 0;
-		user_auxv[AT_VECTOR_SIZE - 1] = 0;
-
-		BUILD_BUG_ON(sizeof(user_auxv) != sizeof(mm->saved_auxv));
-
-		task_lock(current);
-		memcpy(mm->saved_auxv, user_auxv, arg4);
-		task_unlock(current);
-
-		return 0;
 	}
-	default:
-		goto out;
-	}
+
+	mm->start_code	= prctl_map.start_code;
+	mm->end_code	= prctl_map.end_code;
+	mm->start_data	= prctl_map.start_data;
+	mm->end_data	= prctl_map.end_data;
+	mm->start_brk	= prctl_map.start_brk;
+	mm->brk		= prctl_map.brk;
+	mm->start_stack	= prctl_map.start_stack;
+	mm->arg_start	= prctl_map.arg_start;
+	mm->arg_end	= prctl_map.arg_end;
+	mm->env_start	= prctl_map.env_start;
+	mm->env_end	= prctl_map.env_end;
 
 	error = 0;
 out:
-	up_read(&mm->mmap_sem);
+	up_write(&mm->mmap_sem);
 	return error;
 }
 
@@ -2037,6 +2064,17 @@ static int prctl_get_tid_address(struct task_struct *me, int __user **tid_addr)
 	return -EINVAL;
 }
 #endif
+
+int __weak arch_prctl_spec_ctrl_get(struct task_struct *t, unsigned long which)
+{
+	return -EINVAL;
+}
+
+int __weak arch_prctl_spec_ctrl_set(struct task_struct *t, unsigned long which,
+				    unsigned long ctrl)
+{
+	return -EINVAL;
+}
 
 SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
@@ -2135,7 +2173,10 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		error = perf_event_task_enable();
 		break;
 	case PR_GET_TIMERSLACK:
-		error = current->timer_slack_ns;
+		if (current->timer_slack_ns > ULONG_MAX)
+			error = ULONG_MAX;
+		else
+			error = current->timer_slack_ns;
 		break;
 	case PR_SET_TIMERSLACK:
 		if (arg2 <= 0)
@@ -2209,7 +2250,8 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	case PR_SET_THP_DISABLE:
 		if (arg3 || arg4 || arg5)
 			return -EINVAL;
-		down_write(&me->mm->mmap_sem);
+		if (down_write_killable(&me->mm->mmap_sem))
+			return -EINTR;
 		if (arg2)
 			me->mm->def_flags |= VM_NOHUGEPAGE;
 		else
@@ -2219,18 +2261,28 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 	case PR_MPX_ENABLE_MANAGEMENT:
 		if (arg2 || arg3 || arg4 || arg5)
 			return -EINVAL;
-		error = MPX_ENABLE_MANAGEMENT(me);
+		error = MPX_ENABLE_MANAGEMENT();
 		break;
 	case PR_MPX_DISABLE_MANAGEMENT:
 		if (arg2 || arg3 || arg4 || arg5)
 			return -EINVAL;
-		error = MPX_DISABLE_MANAGEMENT(me);
+		error = MPX_DISABLE_MANAGEMENT();
 		break;
 	case PR_SET_FP_MODE:
 		error = SET_FP_MODE(me, arg2);
 		break;
 	case PR_GET_FP_MODE:
 		error = GET_FP_MODE(me);
+		break;
+	case PR_GET_SPECULATION_CTRL:
+		if (arg3 || arg4 || arg5)
+			return -EINVAL;
+		error = arch_prctl_spec_ctrl_get(me, arg2);
+		break;
+	case PR_SET_SPECULATION_CTRL:
+		if (arg4 || arg5)
+			return -EINVAL;
+		error = arch_prctl_spec_ctrl_set(me, arg2, arg3);
 		break;
 	default:
 		error = -EINVAL;

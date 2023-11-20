@@ -55,6 +55,7 @@
  * >	brasl	%r0,ftrace_caller	# offset 0
  */
 
+void *ftrace_func __read_mostly = ftrace_stub;
 unsigned long ftrace_plt;
 
 static inline void ftrace_generate_orig_insn(struct ftrace_insn *insn)
@@ -130,8 +131,7 @@ int ftrace_make_nop(struct module *mod, struct dyn_ftrace *rec,
 	/* Verify that the to be replaced code matches what we expect. */
 	if (memcmp(&orig, &old, sizeof(old)))
 		return -EINVAL;
-	if (probe_kernel_write((void *) rec->ip, &new, sizeof(new)))
-		return -EPERM;
+	s390_kernel_write((void *) rec->ip, &new, sizeof(new));
 	return 0;
 }
 
@@ -159,13 +159,13 @@ int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 	/* Verify that the to be replaced code matches what we expect. */
 	if (memcmp(&orig, &old, sizeof(old)))
 		return -EINVAL;
-	if (probe_kernel_write((void *) rec->ip, &new, sizeof(new)))
-		return -EPERM;
+	s390_kernel_write((void *) rec->ip, &new, sizeof(new));
 	return 0;
 }
 
 int ftrace_update_ftrace_func(ftrace_func_t func)
 {
+	ftrace_func = func;
 	return 0;
 }
 
@@ -205,13 +205,14 @@ unsigned long prepare_ftrace_return(unsigned long parent, unsigned long ip)
 		goto out;
 	if (unlikely(atomic_read(&current->tracing_graph_pause)))
 		goto out;
-	ip = (ip & PSW_ADDR_INSN) - MCOUNT_INSN_SIZE;
+	ip -= MCOUNT_INSN_SIZE;
 	trace.func = ip;
 	trace.depth = current->curr_ret_stack + 1;
 	/* Only trace if the calling function expects to. */
 	if (!ftrace_graph_entry(&trace))
 		goto out;
-	if (ftrace_push_return_trace(parent, ip, &trace.depth, 0) == -EBUSY)
+	if (ftrace_push_return_trace(parent, ip, &trace.depth, 0,
+				     NULL) == -EBUSY)
 		goto out;
 	parent = (unsigned long) return_to_handler;
 out:
@@ -231,14 +232,16 @@ int ftrace_enable_ftrace_graph_caller(void)
 {
 	u8 op = 0x04; /* set mask field to zero */
 
-	return probe_kernel_write(__va(ftrace_graph_caller)+1, &op, sizeof(op));
+	s390_kernel_write(__va(ftrace_graph_caller)+1, &op, sizeof(op));
+	return 0;
 }
 
 int ftrace_disable_ftrace_graph_caller(void)
 {
 	u8 op = 0xf4; /* set mask field to all ones */
 
-	return probe_kernel_write(__va(ftrace_graph_caller)+1, &op, sizeof(op));
+	s390_kernel_write(__va(ftrace_graph_caller)+1, &op, sizeof(op));
+	return 0;
 }
 
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */

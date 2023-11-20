@@ -35,7 +35,7 @@
 #define uart_console(port) \
 	((port)->cons && (port)->cons->index == (port)->line)
 #else
-#define uart_console(port)      (0)
+#define uart_console(port)      ({ (void)port; 0; })
 #endif
 
 struct uart_port;
@@ -123,6 +123,7 @@ struct uart_port {
 	void			(*set_termios)(struct uart_port *,
 				               struct ktermios *new,
 				               struct ktermios *old);
+	unsigned int		(*get_mctrl)(struct uart_port *);
 	void			(*set_mctrl)(struct uart_port *, unsigned int);
 	int			(*startup)(struct uart_port *port);
 	void			(*shutdown)(struct uart_port *port);
@@ -145,11 +146,12 @@ struct uart_port {
 
 #define UPIO_PORT		(SERIAL_IO_PORT)	/* 8b I/O port access */
 #define UPIO_HUB6		(SERIAL_IO_HUB6)	/* Hub6 ISA card */
-#define UPIO_MEM		(SERIAL_IO_MEM)		/* 8b MMIO access */
+#define UPIO_MEM		(SERIAL_IO_MEM)		/* driver-specific */
 #define UPIO_MEM32		(SERIAL_IO_MEM32)	/* 32b little endian */
 #define UPIO_AU			(SERIAL_IO_AU)		/* Au1x00 and RT288x type IO */
 #define UPIO_TSI		(SERIAL_IO_TSI)		/* Tsi108/109 type IO */
 #define UPIO_MEM32BE		(SERIAL_IO_MEM32BE)	/* 32b big endian */
+#define UPIO_MEM16		(SERIAL_IO_MEM16)	/* 16b little endian */
 
 	unsigned int		read_status_mask;	/* driver specific */
 	unsigned int		ignore_status_mask;	/* driver specific */
@@ -159,6 +161,7 @@ struct uart_port {
 	struct console		*cons;			/* struct console, if any */
 #if defined(CONFIG_SERIAL_CORE_CONSOLE) || defined(SUPPORT_SYSRQ)
 	unsigned long		sysrq;			/* sysrq timeout */
+	unsigned int		sysrq_ch;		/* char for sysrq */
 #endif
 
 	/* flags must be updated while holding port mutex */
@@ -235,7 +238,9 @@ struct uart_port {
 	const struct uart_ops	*ops;
 	unsigned int		custom_divisor;
 	unsigned int		line;			/* port index */
+	unsigned int		minor;
 	resource_size_t		mapbase;		/* for ioremap */
+	resource_size_t		mapsize;
 	struct device		*dev;			/* parent device */
 	unsigned char		hub6;			/* this should be in the 8250 driver */
 	unsigned char		suspended;
@@ -278,6 +283,8 @@ struct uart_state {
 	enum uart_pm_state	pm_state;
 	struct circ_buf		xmit;
 
+	atomic_t		refcount;
+	wait_queue_head_t	remove_wait;
 	struct uart_port	*uart_port;
 };
 
@@ -336,24 +343,55 @@ struct earlycon_device {
 	char options[16];		/* e.g., 115200n8 */
 	unsigned int baud;
 };
-int setup_earlycon(char *buf, const char *match,
-		   int (*setup)(struct earlycon_device *, const char *));
 
-extern int of_setup_earlycon(unsigned long addr,
-			     int (*setup)(struct earlycon_device *, const char *));
+struct earlycon_id {
+	char	name[15];
+	char	name_term;	/* In case compiler didn't '\0' term name */
+	char	compatible[128];
+	int	(*setup)(struct earlycon_device *, const char *options);
+};
 
-#define EARLYCON_DECLARE(name, func) \
-static int __init name ## _setup_earlycon(char *buf) \
-{ \
-	return setup_earlycon(buf, __stringify(name), func); \
-} \
-early_param("earlycon", name ## _setup_earlycon);
+extern const struct earlycon_id *__earlycon_table[];
+extern const struct earlycon_id *__earlycon_table_end[];
 
-#define OF_EARLYCON_DECLARE(name, compat, fn)				\
-	_OF_DECLARE(earlycon, name, compat, fn, void *)
+#if defined(CONFIG_SERIAL_EARLYCON) && !defined(MODULE)
+#define EARLYCON_USED_OR_UNUSED	__used
+#else
+#define EARLYCON_USED_OR_UNUSED	__maybe_unused
+#endif
+
+#define _OF_EARLYCON_DECLARE(_name, compat, fn, unique_id)		\
+	static const struct earlycon_id unique_id			\
+	     EARLYCON_USED_OR_UNUSED __initconst			\
+		= { .name = __stringify(_name),				\
+		    .compatible = compat,				\
+		    .setup = fn  };					\
+	static const struct earlycon_id EARLYCON_USED_OR_UNUSED		\
+		__section(__earlycon_table)				\
+		* const __PASTE(__p, unique_id) = &unique_id
+
+#define OF_EARLYCON_DECLARE(_name, compat, fn)				\
+	_OF_EARLYCON_DECLARE(_name, compat, fn,				\
+			     __UNIQUE_ID(__earlycon_##_name))
+
+#define EARLYCON_DECLARE(_name, fn)	OF_EARLYCON_DECLARE(_name, "", fn)
+
+extern int of_setup_earlycon(const struct earlycon_id *match,
+			     unsigned long node,
+			     const char *options);
+
+#ifdef CONFIG_SERIAL_EARLYCON
+extern bool earlycon_init_is_deferred __initdata;
+int setup_earlycon(char *buf);
+#else
+static const bool earlycon_init_is_deferred;
+static inline int setup_earlycon(char *buf) { return 0; }
+#endif
 
 struct uart_port *uart_get_console(struct uart_port *ports, int nr,
 				   struct console *c);
+int uart_parse_earlycon(char *p, unsigned char *iotype, resource_size_t *addr,
+			char **options);
 void uart_parse_options(char *options, int *baud, int *parity, int *bits,
 			int *flow);
 int uart_set_options(struct uart_port *port, struct console *co, int baud,
@@ -390,7 +428,7 @@ int uart_resume_port(struct uart_driver *reg, struct uart_port *port);
 static inline int uart_tx_stopped(struct uart_port *port)
 {
 	struct tty_struct *tty = port->state->port.tty;
-	if (tty->stopped || port->hw_stopped)
+	if ((tty && tty->stopped) || port->hw_stopped)
 		return 1;
 	return 0;
 }
@@ -433,8 +471,42 @@ uart_handle_sysrq_char(struct uart_port *port, unsigned int ch)
 	}
 	return 0;
 }
+static inline int
+uart_prepare_sysrq_char(struct uart_port *port, unsigned int ch)
+{
+	if (port->sysrq) {
+		if (ch && time_before(jiffies, port->sysrq)) {
+			port->sysrq_ch = ch;
+			port->sysrq = 0;
+			return 1;
+		}
+		port->sysrq = 0;
+	}
+	return 0;
+}
+static inline void
+uart_unlock_and_check_sysrq(struct uart_port *port, unsigned long irqflags)
+{
+	int sysrq_ch;
+
+	sysrq_ch = port->sysrq_ch;
+	port->sysrq_ch = 0;
+
+	spin_unlock_irqrestore(&port->lock, irqflags);
+
+	if (sysrq_ch)
+		handle_sysrq(sysrq_ch);
+}
 #else
-#define uart_handle_sysrq_char(port,ch) ({ (void)port; 0; })
+static inline int
+uart_handle_sysrq_char(struct uart_port *port, unsigned int ch) { return 0; }
+static inline int
+uart_prepare_sysrq_char(struct uart_port *port, unsigned int ch) { return 0; }
+static inline void
+uart_unlock_and_check_sysrq(struct uart_port *port, unsigned long irqflags)
+{
+	spin_unlock_irqrestore(&port->lock, irqflags);
+}
 #endif
 
 /*

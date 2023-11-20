@@ -1,4 +1,4 @@
-/* Copyright (C) 2014 B.A.T.M.A.N. contributors:
+/* Copyright (C) 2014-2016  B.A.T.M.A.N. contributors:
  *
  * Linus Lüssing
  *
@@ -18,8 +18,13 @@
 #ifndef _NET_BATMAN_ADV_MULTICAST_H_
 #define _NET_BATMAN_ADV_MULTICAST_H_
 
+#include "main.h"
+
+struct seq_file;
+struct sk_buff;
+
 /**
- * batadv_forw_mode - the way a packet should be forwarded as
+ * enum batadv_forw_mode - the way a packet should be forwarded as
  * @BATADV_FORW_ALL: forward the packet to all nodes (currently via classic
  *  flooding)
  * @BATADV_FORW_SINGLE: forward the packet to a single node (currently via the
@@ -40,7 +45,14 @@ enum batadv_forw_mode
 batadv_mcast_forw_mode(struct batadv_priv *bat_priv, struct sk_buff *skb,
 		       struct batadv_orig_node **mcast_single_orig);
 
+int batadv_mcast_forw_send_orig(struct batadv_priv *bat_priv,
+				struct sk_buff *skb,
+				unsigned short vid,
+				struct batadv_orig_node *orig_node);
+
 void batadv_mcast_init(struct batadv_priv *bat_priv);
+
+int batadv_mcast_flags_seq_print_text(struct seq_file *seq, void *offset);
 
 void batadv_mcast_free(struct batadv_priv *bat_priv);
 
@@ -62,6 +74,16 @@ batadv_mcast_forw_mode(struct batadv_priv *bat_priv, struct sk_buff *skb,
 static inline int batadv_mcast_init(struct batadv_priv *bat_priv)
 {
 	return 0;
+}
+
+static inline int
+batadv_mcast_forw_send_orig(struct batadv_priv *bat_priv,
+			    struct sk_buff *skb,
+			    unsigned short vid,
+			    struct batadv_orig_node *orig_node)
+{
+	kfree_skb(skb);
+	return NET_XMIT_DROP;
 }
 
 static inline void batadv_mcast_free(struct batadv_priv *bat_priv)

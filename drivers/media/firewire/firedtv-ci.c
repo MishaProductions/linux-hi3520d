@@ -138,6 +138,8 @@ static int fdtv_ca_pmt(struct firedtv *fdtv, void *arg)
 	} else {
 		data_length = msg->msg[3];
 	}
+	if (data_length > sizeof(msg->msg) - data_pos)
+		return -EINVAL;
 
 	return avc_ca_pmt(fdtv, &msg->msg[data_pos], data_length);
 }
@@ -241,7 +243,7 @@ int fdtv_ca_register(struct firedtv *fdtv)
 		return -EFAULT;
 
 	err = dvb_register_device(&fdtv->adapter, &fdtv->cadev,
-				  &fdtv_ca, fdtv, DVB_DEVICE_CA);
+				  &fdtv_ca, fdtv, DVB_DEVICE_CA, 0);
 
 	if (stat.ca_application_info == 0)
 		dev_err(fdtv->device, "CaApplicationInfo is not set\n");

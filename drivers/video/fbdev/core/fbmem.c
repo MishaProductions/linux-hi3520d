@@ -32,6 +32,7 @@
 #include <linux/device.h>
 #include <linux/efi.h>
 #include <linux/fb.h>
+#include <linux/overflow.h>
 
 #include <asm/fb.h>
 
@@ -425,6 +426,9 @@ static void fb_do_show_logo(struct fb_info *info, struct fb_image *image,
 {
 	unsigned int x;
 
+	if (image->width > info->var.xres || image->height > info->var.yres)
+		return;
+
 	if (rotate == FB_ROTATE_UR) {
 		for (x = 0;
 		     x < num && image->dx + image->width <= info->var.xres;
@@ -433,7 +437,9 @@ static void fb_do_show_logo(struct fb_info *info, struct fb_image *image,
 			image->dx += image->width + 8;
 		}
 	} else if (rotate == FB_ROTATE_UD) {
-		for (x = 0; x < num; x++) {
+		u32 dx = image->dx;
+
+		for (x = 0; x < num && image->dx <= dx; x++) {
 			info->fbops->fb_imageblit(info, image);
 			image->dx -= image->width + 8;
 		}
@@ -445,7 +451,9 @@ static void fb_do_show_logo(struct fb_info *info, struct fb_image *image,
 			image->dy += image->height + 8;
 		}
 	} else if (rotate == FB_ROTATE_CCW) {
-		for (x = 0; x < num; x++) {
+		u32 dy = image->dy;
+
+		for (x = 0; x < num && image->dy <= dy; x++) {
 			info->fbops->fb_imageblit(info, image);
 			image->dy -= image->height + 8;
 		}
@@ -974,6 +982,7 @@ fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 	if ((var->activate & FB_ACTIVATE_FORCE) ||
 	    memcmp(&info->var, var, sizeof(struct fb_var_screeninfo))) {
 		u32 activate = var->activate;
+		u32 unused;
 
 		/* When using FOURCC mode, make sure the red, green, blue and
 		 * transp fields are set to 0.
@@ -993,6 +1002,15 @@ fb_set_var(struct fb_info *info, struct fb_var_screeninfo *var)
 			*var = info->var;
 			goto done;
 		}
+
+		/* bitfill_aligned() assumes that it's at least 8x8 */
+		if (var->xres < 8 || var->yres < 8)
+			return -EINVAL;
+
+		/* Too huge resolution causes multiplication overflow. */
+		if (check_mul_overflow(var->xres, var->yres, &unused) ||
+		    check_mul_overflow(var->xres_virtual, var->yres_virtual, &unused))
+			return -EINVAL;
 
 		ret = info->fbops->fb_check_var(var, info);
 
@@ -1125,7 +1143,7 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 	case FBIOGET_FSCREENINFO:
 		if (!lock_fb_info(info))
 			return -ENODEV;
-		fix = info->fix;
+		memcpy(&fix, &info->fix, sizeof(fix));
 		unlock_fb_info(info);
 
 		ret = copy_to_user(argp, &fix, sizeof(fix)) ? -EFAULT : 0;
@@ -1608,6 +1626,11 @@ static int do_remove_conflicting_framebuffers(struct apertures_struct *a,
 	return 0;
 }
 
+static bool lockless_register_fb;
+module_param_named_unsafe(lockless_register_fb, lockless_register_fb, bool, 0400);
+MODULE_PARM_DESC(lockless_register_fb,
+	"Lockless framebuffer registration for debugging [default=off]");
+
 static int do_register_framebuffer(struct fb_info *fb_info)
 {
 	int i, ret;
@@ -1675,24 +1698,27 @@ static int do_register_framebuffer(struct fb_info *fb_info)
 	registered_fb[i] = fb_info;
 
 	event.info = fb_info;
-	console_lock();
+	if (!lockless_register_fb)
+		console_lock();
 	if (!lock_fb_info(fb_info)) {
-		console_unlock();
+		if (!lockless_register_fb)
+			console_unlock();
 		return -ENODEV;
 	}
 
 	fb_notifier_call_chain(FB_EVENT_FB_REGISTERED, &event);
 	unlock_fb_info(fb_info);
-	console_unlock();
+	if (!lockless_register_fb)
+		console_unlock();
 	return 0;
 }
 
-static int do_unregister_framebuffer(struct fb_info *fb_info)
+static int unbind_console(struct fb_info *fb_info)
 {
 	struct fb_event event;
-	int i, ret = 0;
+	int ret;
+	int i = fb_info->node;
 
-	i = fb_info->node;
 	if (i < 0 || i >= FB_MAX || registered_fb[i] != fb_info)
 		return -EINVAL;
 
@@ -1707,17 +1733,29 @@ static int do_unregister_framebuffer(struct fb_info *fb_info)
 	unlock_fb_info(fb_info);
 	console_unlock();
 
+	return ret;
+}
+
+static int __unlink_framebuffer(struct fb_info *fb_info);
+
+static int do_unregister_framebuffer(struct fb_info *fb_info)
+{
+	struct fb_event event;
+	int ret;
+
+	ret = unbind_console(fb_info);
+
 	if (ret)
 		return -EINVAL;
 
 	pm_vt_switch_unregister(fb_info->dev);
 
-	unlink_framebuffer(fb_info);
+	__unlink_framebuffer(fb_info);
 	if (fb_info->pixmap.addr &&
 	    (fb_info->pixmap.flags & FB_PIXMAP_DEFAULT))
 		kfree(fb_info->pixmap.addr);
 	fb_destroy_modelist(&fb_info->modelist);
-	registered_fb[i] = NULL;
+	registered_fb[fb_info->node] = NULL;
 	num_registered_fb--;
 	fb_cleanup_device(fb_info);
 	event.info = fb_info;
@@ -1730,7 +1768,7 @@ static int do_unregister_framebuffer(struct fb_info *fb_info)
 	return 0;
 }
 
-int unlink_framebuffer(struct fb_info *fb_info)
+static int __unlink_framebuffer(struct fb_info *fb_info)
 {
 	int i;
 
@@ -1742,6 +1780,20 @@ int unlink_framebuffer(struct fb_info *fb_info)
 		device_destroy(fb_class, MKDEV(FB_MAJOR, i));
 		fb_info->dev = NULL;
 	}
+
+	return 0;
+}
+
+int unlink_framebuffer(struct fb_info *fb_info)
+{
+	int ret;
+
+	ret = __unlink_framebuffer(fb_info);
+	if (ret)
+		return ret;
+
+	unbind_console(fb_info);
+
 	return 0;
 }
 EXPORT_SYMBOL(unlink_framebuffer);
@@ -1846,17 +1898,31 @@ EXPORT_SYMBOL(fb_set_suspend);
 static int __init
 fbmem_init(void)
 {
-	proc_create("fb", 0, NULL, &fb_proc_fops);
+	int ret;
 
-	if (register_chrdev(FB_MAJOR,"fb",&fb_fops))
+	if (!proc_create("fb", 0, NULL, &fb_proc_fops))
+		return -ENOMEM;
+
+	ret = register_chrdev(FB_MAJOR, "fb", &fb_fops);
+	if (ret) {
 		printk("unable to get major %d for fb devs\n", FB_MAJOR);
+		goto err_chrdev;
+	}
 
 	fb_class = class_create(THIS_MODULE, "graphics");
 	if (IS_ERR(fb_class)) {
-		printk(KERN_WARNING "Unable to create fb class; errno = %ld\n", PTR_ERR(fb_class));
+		ret = PTR_ERR(fb_class);
+		pr_warn("Unable to create fb class; errno = %d\n", ret);
 		fb_class = NULL;
+		goto err_class;
 	}
 	return 0;
+
+err_class:
+	unregister_chrdev(FB_MAJOR, "fb");
+err_chrdev:
+	remove_proc_entry("fb", NULL);
+	return ret;
 }
 
 #ifdef MODULE
