@@ -97,16 +97,13 @@ void set_irq_flags(unsigned int irq, unsigned int iflags)
 	irq_modify_status(irq, clr, set & ~clr);
 }
 EXPORT_SYMBOL_GPL(set_irq_flags);
-extern void early_print(const char *str, ...);
+
 void __init init_IRQ(void)
 {
 	int ret;
 
 	if (IS_ENABLED(CONFIG_OF) && !machine_desc->init_irq)
-		{
-			early_print("irqchip_init\n");
-			irqchip_init();
-		}
+		irqchip_init();
 	else
 		machine_desc->init_irq();
 
