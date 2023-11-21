@@ -88,7 +88,7 @@ static int hieth_init_skb_buffers(struct hieth_netdev_local *ld)
 {
 	int i;
 	struct sk_buff *skb;
-
+hieth_error("initialize buffer");
 	for (i = 0; i < CONFIG_HIETH_MAX_RX_POOLS; i++) {
 		skb = dev_alloc_skb(SKB_SIZE);
 		if (!skb)
@@ -153,9 +153,9 @@ struct sk_buff *hieth_platdev_alloc_skb(struct hieth_netdev_local *ld)
 		}
 	}
 
-	memset(skb, 0, offsetof(struct sk_buff, tail));
+	//memset(skb, 0, offsetof(struct sk_buff, tail));
 
-	skb->data = skb->tail = skb->head;
+	//skb->data = skb->tail = skb->head;
 
 	skb->end = skb->data + (skb->truesize - sizeof(struct sk_buff));
 	skb->len = 0;
@@ -206,7 +206,7 @@ static void hieth_net_isr_proc(struct hieth_netdev_local *ld, int ints)
 	if ((ints & UD_BIT_NAME(HIETH_INT_MULTI_RXRDY)) &&
 			(hieth_hw_recv_tryup(ld) > 0)) {
 
-		tasklet_schedule(&ld->bf_recv);
+		tasklet_schedule(&ld->bf_recv); // crash!
 	}
 
 	if (ints & UD_BIT_NAME(HIETH_INT_TXQUE_RDY)) {
