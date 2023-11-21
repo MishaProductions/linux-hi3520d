@@ -17,6 +17,7 @@
 #include <linux/atomic.h>
 #include <asm/setup.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
 
 #include "hieth.h"
 #include "mdio.h"
@@ -174,7 +175,7 @@ static void hieth_bfproc_recv(unsigned long data)
 	struct sk_buff *skb;
 
 	hieth_hw_recv_tryup(ld);
-
+	printk(KERN_INFO "hieth_bfproc_recv\n");
 	while ((skb = skb_dequeue(&ld->rx_head)) != NULL) {
 
 		skb->protocol = eth_type_trans(skb, dev);
@@ -225,7 +226,7 @@ static irqreturn_t hieth_net_isr(int irq, void *dev_id)
 {
 	int ints;
 	struct hieth_netdev_local *ld;
-
+	printk(KERN_INFO" got irq...\n");
 	if (hieth_devs_save[UP_PORT])
 		ld = netdev_priv(hieth_devs_save[UP_PORT]);
 	else if (hieth_devs_save[DOWN_PORT])
@@ -458,7 +459,7 @@ static int hieth_net_hard_start_xmit(
 	int tx_lpi_assert = 0x2;
 	unsigned int data;
 	data = readl((void*)(ld->iobase + 0x488));
-
+	printk(KERN_INFO" sending packet...\n");
 	data &= ~tx_lpi_assert;
 	writel(data, (void*)(ld->iobase + 0x488));
 
@@ -769,11 +770,11 @@ static void phy_quirk(struct hieth_mdio_local *mdio, int phyaddr)
 }
 static int hieth_plat_driver_probe(struct platform_device *pdev)
 {
-	int ret = -1;
+	int ret = 0;
 	struct net_device *ndev = NULL;
 
 	memset(hieth_devs_save, 0, sizeof(hieth_devs_save));
-
+	printk(KERN_INFO "hieth_plat_driver_probe\n");
 	hieth_sys_init();
 
 	if (hieth_mdiobus_driver_init(pdev)) {
@@ -792,8 +793,10 @@ static int hieth_plat_driver_probe(struct platform_device *pdev)
 
 	if (hieth_devs_save[UP_PORT])
 		ndev = hieth_devs_save[UP_PORT];
+	#ifdef CONFIG_HIETH_DOWNPORT_EN
 	else if (hieth_devs_save[DOWN_PORT])
 		ndev = hieth_devs_save[DOWN_PORT];
+	#endif
 
 	if (!ndev) {
 		hieth_error("no dev probed!\n");
@@ -802,16 +805,13 @@ static int hieth_plat_driver_probe(struct platform_device *pdev)
 	}
 
 	if (!is_valid_ether_addr(macaddr.sa_data)) {
-		print_mac_address(KERN_WARNING "Invalid HW-MAC Address: ", \
-				macaddr.sa_data, "\n");
+		print_mac_address(KERN_WARNING "Invalid HW-MAC Address: ", macaddr.sa_data, "\n");
 		random_ether_addr(macaddr.sa_data);
-		print_mac_address(KERN_WARNING "Set Random MAC address: ", \
-				macaddr.sa_data, "\n");
+		print_mac_address(KERN_WARNING "Set Random MAC address: ", macaddr.sa_data, "\n");
 	}
 	hieth_net_set_mac_address(ndev, (void *)&macaddr);
 
-	ret = request_irq(CONFIG_HIETH_IRQNUM, hieth_net_isr, IRQF_SHARED, \
-				"hieth", hieth_devs_save);
+	ret = request_irq(platform_get_irq(pdev, 0), hieth_net_isr, IRQF_SHARED, "hieth", hieth_devs_save);
 	if (ret) {
 		hieth_error("request_irq %d failed!", CONFIG_HIETH_IRQNUM);
 		goto _error_request_irq;
@@ -821,7 +821,9 @@ static int hieth_plat_driver_probe(struct platform_device *pdev)
 
 _error_request_irq:
 	hieth_platdev_remove_port(pdev, UP_PORT);
+	#ifdef CONFIG_HIETH_DOWNPORT_EN
 	hieth_platdev_remove_port(pdev, DOWN_PORT);
+	#endif
 
 _error_nodev_exit:
 	hieth_mdiobus_driver_exit();
@@ -836,7 +838,7 @@ static int hieth_plat_driver_remove(struct platform_device *pdev)
 {
 	hieth_assert(hieth_devs_save[UP_PORT] || hieth_devs_save[DOWN_PORT]);
 
-	free_irq(CONFIG_HIETH_IRQNUM, hieth_devs_save);
+	free_irq(platform_get_irq(pdev, 0), hieth_devs_save);
 
 	hieth_platdev_remove_port(pdev, UP_PORT);
 	hieth_platdev_remove_port(pdev, DOWN_PORT);
@@ -916,6 +918,11 @@ static int hieth_plat_driver_resume(struct platform_device *pdev)
 #define hieth_plat_driver_resume	NULL
 #endif
 
+static const struct of_device_id ahci_of_match[] = {
+	{ .compatible = "hisilicon-eth", },
+	{},
+};
+
 static struct platform_driver hieth_platform_driver = {
 	.probe		= hieth_plat_driver_probe,
 	.remove		= hieth_plat_driver_remove,
@@ -925,70 +932,25 @@ static struct platform_driver hieth_platform_driver = {
 		.owner	= THIS_MODULE,
 		.name	= HIETH_DRIVER_NAME,
 		.bus	= &platform_bus_type,
+		.of_match_table = ahci_of_match,
 	},
-};
-
-static struct resource hieth_resources[] = {
-	[0] = {
-		.start	= CONFIG_HIETH_IOBASE,
-		.end	= CONFIG_HIETH_IOBASE + CONFIG_HIETH_IOSIZE - 1,
-		.flags	= IORESOURCE_MEM,
-	},
-	[1] = {
-		.start	= CONFIG_HIETH_IRQNUM,
-		.end	= CONFIG_HIETH_IRQNUM,
-		.flags	= IORESOURCE_IRQ,
-	}
-};
-
-static void hieth_platform_device_release(struct device *dev)
-{
-}
-
-static struct platform_device hieth_platform_device = {
-	.name = HIETH_DRIVER_NAME,
-	.id   = 0,
-	.dev = {
-		.platform_data	= NULL,
-		.dma_mask = (u64 *)~0,
-		.coherent_dma_mask = (u64)~0,
-		.release = hieth_platform_device_release,
-	},
-	.num_resources = ARRAY_SIZE(hieth_resources),
-	.resource = hieth_resources,
 };
 
 static int hieth_init(void)
 {
 	int ret = 0;
-
-	ret = platform_device_register(&hieth_platform_device);
-	if (ret) {
-		hieth_error("register platform device failed!");
-		goto _error_register_device;
-	}
-
+	printk(KERN_INFO "Hisilicon ETH driver for device tree\n");
 	ret = platform_driver_register(&hieth_platform_driver);
 	if (ret) {
-		hieth_error("register platform driver failed!");
-		goto _error_register_driver;
+		hieth_error("register platform device failed!");
+		return -1;
 	}
-
-	return ret;
-
-_error_register_driver:
-	platform_device_unregister(&hieth_platform_device);
-
-_error_register_device:
-
-	return -1;
+	return 0;
 }
 
 static void hieth_exit(void)
 {
 	platform_driver_unregister(&hieth_platform_driver);
-
-	platform_device_unregister(&hieth_platform_device);
 }
 
 module_init(hieth_init);

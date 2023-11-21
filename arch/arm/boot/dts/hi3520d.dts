@@ -88,6 +88,25 @@
 			    reg			= <0x10080000 0xFFFF>;
 			    interrupts		= <0 20 0>;
 		    };
+
+            eth: eth@10090000 {
+                compatible		= "hisilicon-eth";
+			    reg			= <0x10090000 0xFFFF>;
+			    interrupts		= <0 24 0>;
+            };
+
+
+            ehci@0x100b0000 {
+			    compatible = "generic-ehci";
+			    reg = < 0x100b0000 0xFFFF >;
+			    interrupts = < 0 21 0 >;
+		    };
+
+            ohci@0x100a0000 {
+                compatible = "generic-ohci";
+			    reg = < 0x100a0000 0xFFFF >;
+			    interrupts = < 0 22 0 >;
+		    };
         };
     };
    

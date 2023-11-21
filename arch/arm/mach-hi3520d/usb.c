@@ -181,15 +181,5 @@ static struct platform_device hiusb_ohci_platdev = {
 
 void register_hiusb(void)
 {
-    int ret = platform_device_register(&hiusb_ehci_platdev);
-    if (ret < 0)
-    {
-        printk(KERN_ERR "failed to register EHCI device: %d", ret);
-    }
-
-    ret = platform_device_register(&hiusb_ohci_platdev);
-    if (ret < 0)
-    {
-        printk(KERN_ERR "failed to register OHCI device: %d", ret);
-    }
+	hiusb_start_hcd();
 }

@@ -135,20 +135,20 @@ static void hieth_phy_reset(void)
 #ifdef CONFIG_HIETH_RESET_HELPER_EN
 	local_irq_save(flags);
 	/*gpiox[x] set to reset, then sleep 200ms*/
-	val = readw(IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
+	val = readw((void*)IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
 	val |= (1 << CONFIG_HIETH_RESET_HELPER_GPIO_BIT);
-	writew(val, IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
-	writew(0, (IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE)
+	writew(val, (void*)IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
+	writew(0, ((void*)IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE)
 				+ (4 << CONFIG_HIETH_RESET_HELPER_GPIO_BIT)));
 	local_irq_restore(flags);
 	msleep(200);
 	local_irq_save(flags);
 	/*then,cancel reset,and should sleep 50ms*/
-	val = readw(IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
+	val = readw((void*)IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
 	val |= (1 << CONFIG_HIETH_RESET_HELPER_GPIO_BIT);
-	writew(val, IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
+	writew(val, (void*)IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE) + 0x400);
 	writew((1 << (CONFIG_HIETH_RESET_HELPER_GPIO_BIT)),
-			(IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE)
+			((void*)IO_ADDRESS(CONFIG_HIETH_RESET_HELPER_GPIO_BASE)
 			 + (4 << CONFIG_HIETH_RESET_HELPER_GPIO_BIT)));
 
 	local_irq_restore(flags);
