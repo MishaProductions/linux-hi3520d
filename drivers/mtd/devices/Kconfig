@@ -221,4 +221,14 @@ config BCH_CONST_T
 	default 4
 endif
 
+config MTD_SPI_IDS
+	bool "SPI Flash Timing Cycles Probe Function"
+	default y
+	help
+	  This option enables hisfc300/hisfc350 used spi flash timing cylces
+	  probe function.
+	  If your use hisfc300 and hisfc350, this function should be select.
+
+source "drivers/mtd/devices/hisfc350/Kconfig"
+
 endmenu

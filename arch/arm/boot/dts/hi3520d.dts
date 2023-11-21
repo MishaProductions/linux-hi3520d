@@ -1,0 +1,94 @@
+/dts-v1/;
+#include "skeleton.dtsi"
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+/ {
+    model = "Hi3520d DVR";
+    compatible = "hisi,hi3520d";
+    interrupt-parent = <&gic>;
+
+    aliases {
+		serial0 = &uart0;
+		serial1 = &uart1;
+	};
+
+    memory {
+        device_type = "memory";
+        reg = <0x80000000 0x10000000>;
+    };
+    
+    cpus {
+        #address-cells = <1>;
+		#size-cells = <0>;
+        cpu@0 {
+            compatible = "arm,cortex-a9";
+            device_type = "cpu";
+			reg = <0>;
+        };
+    };
+
+    pclk: pclk@0 {
+		#clock-cells = <0>;
+		compatible = "hisi,hi3520d-clock";
+		clock-frequency = <300000000>;
+        interrupts = <0 3 0>;
+	};
+
+    uartclk: uartclk {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+		clock-frequency = <75000000>;
+	};
+
+
+
+    soc: soc {
+        #address-cells = <1>;
+		#size-cells = <1>;
+        compatible = "simple-bus";
+
+        /* child and parent address space 1:1 mapped */
+        ranges;
+
+        amba {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "arm,amba-bus";
+			ranges;
+
+            gic: interrupt-controller@20301000 {
+                compatible = "arm,cortex-a9-gic";
+                interrupt-controller;
+                #interrupt-cells = <3>;
+                #address-cells = <0>;
+                /*arm,routable-irqs = <64>;*/
+                /*  gic dist base, gic cpu base*/
+                reg = <0x20301000 0xF00>, <0x20300100 0xF00>; //cpu
+            };
+
+            /* Make sure to subtract 32 from the actual IRQ number */
+            uart0: serial@20080000 {
+                compatible = "arm,pl011", "arm,primecell";
+                reg = <0x20080000 0x1000>;
+                clocks = <&uartclk>;
+                clock-names = "apb_pclk";
+                interrupts = <0 8 0>;
+            };
+
+            uart1: serial@20090000 {
+                compatible = "arm,pl011", "arm,primecell";
+                reg = <0x20090000 0x1000>;
+                clocks = <&uartclk>; 
+                clock-names = "apb_pclk";
+                interrupts = <0 9 0>;
+            };
+
+            sata0: sata@10080000 {
+			    compatible		= "hisi,hi3520d-ahci", "generic-ahci";
+			    reg			= <0x10080000 0xFFFF>;
+			    interrupts		= <0 20 0>;
+		    };
+        };
+    };
+   
+};
