@@ -122,49 +122,7 @@ static void hieth_destroy_skb_buffers(struct hieth_netdev_local *ld)
 
 struct sk_buff *hieth_platdev_alloc_skb(struct hieth_netdev_local *ld)
 {
-	struct sk_buff *skb;
-	int i;
-
-	skb = ld->rx_pool.sk_pool[ld->rx_pool.next_free_skb++];
-
-	if (ld->rx_pool.next_free_skb == CONFIG_HIETH_MAX_RX_POOLS)
-		ld->rx_pool.next_free_skb = 0;
-
-	/*current skb is used by kernel or other process,find another skb*/
-	if (skb_shared(skb) || (atomic_read(&(skb_shinfo(skb)->dataref)) > 1)) {
-
-		for (i = 0; i < CONFIG_HIETH_MAX_RX_POOLS; i++) {
-
-			skb = ld->rx_pool.sk_pool[ld->rx_pool.next_free_skb++];
-			if (ld->rx_pool.next_free_skb ==
-						CONFIG_HIETH_MAX_RX_POOLS)
-				ld->rx_pool.next_free_skb = 0;
-
-			if ((skb_shared(skb) == 0) &&
-				(atomic_read(&(skb_shinfo(skb)->dataref)) <= 1))
-				break;
-		}
-
-		if (i == CONFIG_HIETH_MAX_RX_POOLS) {
-			ld->stat.rx_pool_dry_times++;
-			hieth_trace(7, "%ld: no free skb\n",
-				ld->stat.rx_pool_dry_times);
-			return NULL;
-		}
-	}
-
-	//memset(skb, 0, offsetof(struct sk_buff, tail));
-
-	//skb->data = skb->tail = skb->head;
-
-	skb->end = skb->data + (skb->truesize - sizeof(struct sk_buff));
-	skb->len = 0;
-	skb->data_len = 0;
-	skb->cloned = 0;
-
-	atomic_inc(&skb->users);
-
-	return skb;
+	return dev_alloc_skb(SKB_SIZE);
 }
 
 static void hieth_bfproc_recv(unsigned long data)
@@ -175,7 +133,6 @@ static void hieth_bfproc_recv(unsigned long data)
 	struct sk_buff *skb;
 
 	hieth_hw_recv_tryup(ld);
-	printk(KERN_INFO "hieth_bfproc_recv\n");
 	while ((skb = skb_dequeue(&ld->rx_head)) != NULL) {
 
 		skb->protocol = eth_type_trans(skb, dev);
@@ -226,7 +183,7 @@ static irqreturn_t hieth_net_isr(int irq, void *dev_id)
 {
 	int ints;
 	struct hieth_netdev_local *ld;
-	printk(KERN_INFO" got irq...\n");
+	//printk(KERN_INFO" got irq...\n");
 	if (hieth_devs_save[UP_PORT])
 		ld = netdev_priv(hieth_devs_save[UP_PORT]);
 	else if (hieth_devs_save[DOWN_PORT])
@@ -459,7 +416,7 @@ static int hieth_net_hard_start_xmit(
 	int tx_lpi_assert = 0x2;
 	unsigned int data;
 	data = readl((void*)(ld->iobase + 0x488));
-	printk(KERN_INFO" sending packet...\n");
+	//printk(KERN_INFO" sending packet...\n");
 	data &= ~tx_lpi_assert;
 	writel(data, (void*)(ld->iobase + 0x488));
 
@@ -476,10 +433,11 @@ static int hieth_net_hard_start_xmit(
 	}
 
 	// TODO
-	//dev->trans_start = jiffies;
+	netif_trans_update(dev);
 
 	ld->stats.tx_packets++;
 	ld->stats.tx_bytes += skb->len;
+	netdev_sent_queue(dev, skb->len);
 
 	hieth_clear_irqstatus(ld, UD_BIT_NAME(HIETH_INT_TXQUE_RDY));
 	if (!hieth_hw_xmitq_ready(ld)) {
