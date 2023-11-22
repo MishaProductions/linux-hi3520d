@@ -194,7 +194,7 @@ static void tifm_7xx1_switch_media(struct work_struct *work)
 				spin_unlock_irqrestore(&fm->lock, flags);
 			}
 			if (sock)
-				tifm_free_device(&sock->dev);
+				put_device(&sock->dev);
 		}
 		spin_lock_irqsave(&fm->lock, flags);
 	}
@@ -415,7 +415,7 @@ static void tifm_7xx1_remove(struct pci_dev *dev)
 	tifm_free_adapter(fm);
 }
 
-static struct pci_device_id tifm_7xx1_pci_tbl [] = {
+static const struct pci_device_id tifm_7xx1_pci_tbl[] = {
 	{ PCI_VENDOR_ID_TI, PCI_DEVICE_ID_TI_XX21_XX11_FM, PCI_ANY_ID,
 	  PCI_ANY_ID, 0, 0, 0 }, /* xx21 - the one I have */
         { PCI_VENDOR_ID_TI, PCI_DEVICE_ID_TI_XX12_FM, PCI_ANY_ID,

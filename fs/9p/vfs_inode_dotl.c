@@ -247,7 +247,7 @@ v9fs_vfs_atomic_open_dotl(struct inode *dir, struct dentry *dentry,
 	int err = 0;
 	kgid_t gid;
 	umode_t mode;
-	char *name = NULL;
+	const unsigned char *name = NULL;
 	struct p9_qid qid;
 	struct inode *inode;
 	struct p9_fid *fid = NULL;
@@ -272,7 +272,7 @@ v9fs_vfs_atomic_open_dotl(struct inode *dir, struct dentry *dentry,
 
 	v9ses = v9fs_inode2v9ses(dir);
 
-	name = (char *) dentry->d_name.name;
+	name = dentry->d_name.name;
 	p9_debug(P9_DEBUG_VFS, "name:%s flags:0x%x mode:0x%hx\n",
 		 name, flags, omode);
 
@@ -388,7 +388,7 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir,
 	struct v9fs_session_info *v9ses;
 	struct p9_fid *fid = NULL, *dfid = NULL;
 	kgid_t gid;
-	char *name;
+	const unsigned char *name;
 	umode_t mode;
 	struct inode *inode;
 	struct p9_qid qid;
@@ -419,7 +419,7 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir,
 			 err);
 		goto error;
 	}
-	name = (char *) dentry->d_name.name;
+	name = dentry->d_name.name;
 	err = p9_client_mkdir_dotl(dfid, name, mode, gid, &qid);
 	if (err < 0)
 		goto error;
@@ -471,9 +471,10 @@ error:
 }
 
 static int
-v9fs_vfs_getattr_dotl(struct vfsmount *mnt, struct dentry *dentry,
-		 struct kstat *stat)
+v9fs_vfs_getattr_dotl(const struct path *path, struct kstat *stat,
+		 u32 request_mask, unsigned int flags)
 {
+	struct dentry *dentry = path->dentry;
 	struct v9fs_session_info *v9ses;
 	struct p9_fid *fid;
 	struct p9_stat_dotl *st;
@@ -656,14 +657,10 @@ v9fs_stat2inode_dotl(struct p9_stat_dotl *stat, struct inode *inode,
 		if (stat->st_result_mask & P9_STATS_NLINK)
 			set_nlink(inode, stat->st_nlink);
 		if (stat->st_result_mask & P9_STATS_MODE) {
-			inode->i_mode = stat->st_mode;
-			if ((S_ISBLK(inode->i_mode)) ||
-						(S_ISCHR(inode->i_mode)))
-				init_special_inode(inode, inode->i_mode,
-								inode->i_rdev);
+			mode = stat->st_mode & S_IALLUGO;
+			mode |= inode->i_mode & ~S_IALLUGO;
+			inode->i_mode = mode;
 		}
-		if (stat->st_result_mask & P9_STATS_RDEV)
-			inode->i_rdev = new_decode_dev(stat->st_rdev);
 		if (!(flags & V9FS_STAT2INODE_KEEP_ISIZE) &&
 		    stat->st_result_mask & P9_STATS_SIZE)
 			v9fs_i_size_write(inode, stat->st_size);
@@ -685,14 +682,14 @@ v9fs_vfs_symlink_dotl(struct inode *dir, struct dentry *dentry,
 {
 	int err;
 	kgid_t gid;
-	char *name;
+	const unsigned char *name;
 	struct p9_qid qid;
 	struct inode *inode;
 	struct p9_fid *dfid;
 	struct p9_fid *fid = NULL;
 	struct v9fs_session_info *v9ses;
 
-	name = (char *) dentry->d_name.name;
+	name = dentry->d_name.name;
 	p9_debug(P9_DEBUG_VFS, "%lu,%s,%s\n", dir->i_ino, name, symname);
 	v9ses = v9fs_inode2v9ses(dir);
 
@@ -706,7 +703,7 @@ v9fs_vfs_symlink_dotl(struct inode *dir, struct dentry *dentry,
 	gid = v9fs_get_fsgid_for_create(dir);
 
 	/* Server doesn't alter fid on TSYMLINK. Hence no need to clone it. */
-	err = p9_client_symlink(dfid, name, (char *)symname, gid, &qid);
+	err = p9_client_symlink(dfid, name, symname, gid, &qid);
 
 	if (err < 0) {
 		p9_debug(P9_DEBUG_VFS, "p9_client_symlink failed %d\n", err);
@@ -782,7 +779,7 @@ v9fs_vfs_link_dotl(struct dentry *old_dentry, struct inode *dir,
 	if (IS_ERR(oldfid))
 		return PTR_ERR(oldfid);
 
-	err = p9_client_link(dfid, oldfid, (char *)dentry->d_name.name);
+	err = p9_client_link(dfid, oldfid, dentry->d_name.name);
 
 	if (err < 0) {
 		p9_debug(P9_DEBUG_VFS, "p9_client_link failed %d\n", err);
@@ -819,7 +816,7 @@ v9fs_vfs_mknod_dotl(struct inode *dir, struct dentry *dentry, umode_t omode,
 {
 	int err;
 	kgid_t gid;
-	char *name;
+	const unsigned char *name;
 	umode_t mode;
 	struct v9fs_session_info *v9ses;
 	struct p9_fid *fid = NULL, *dfid = NULL;
@@ -849,7 +846,7 @@ v9fs_vfs_mknod_dotl(struct inode *dir, struct dentry *dentry, umode_t omode,
 			 err);
 		goto error;
 	}
-	name = (char *) dentry->d_name.name;
+	name = dentry->d_name.name;
 
 	err = p9_client_mknod_dotl(dfid, name, mode, rdev, gid, &qid);
 	if (err < 0)
@@ -983,7 +980,6 @@ const struct inode_operations v9fs_file_inode_operations_dotl = {
 };
 
 const struct inode_operations v9fs_symlink_inode_operations_dotl = {
-	.readlink = generic_readlink,
 	.get_link = v9fs_vfs_get_link_dotl,
 	.getattr = v9fs_vfs_getattr_dotl,
 	.setattr = v9fs_vfs_setattr_dotl,

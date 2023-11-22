@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 #
 # Makefile for the linux kernel.
 #
@@ -99,5 +100,7 @@ obj-$(CONFIG_SMP)		+= psci_smp.o
 endif
 
 obj-$(CONFIG_HAVE_ARM_SMCCC)	+= smccc-call.o
+
+obj-$(CONFIG_GENERIC_CPU_VULNERABILITIES) += spectre.o
 
 extra-y := $(head-y) vmlinux.lds

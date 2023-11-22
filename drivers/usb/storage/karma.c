@@ -105,7 +105,7 @@ static struct us_unusual_dev karma_unusual_dev_list[] = {
  */
 static int rio_karma_send_command(char cmd, struct us_data *us)
 {
-	int result, partial;
+	int result;
 	unsigned long timeout;
 	static unsigned char seq = 1;
 	struct karma_data *data = (struct karma_data *) us->extra;
@@ -119,12 +119,12 @@ static int rio_karma_send_command(char cmd, struct us_data *us)
 	timeout = jiffies + msecs_to_jiffies(6000);
 	for (;;) {
 		result = usb_stor_bulk_transfer_buf(us, us->send_bulk_pipe,
-			us->iobuf, RIO_SEND_LEN, &partial);
+			us->iobuf, RIO_SEND_LEN, NULL);
 		if (result != USB_STOR_XFER_GOOD)
 			goto err;
 
 		result = usb_stor_bulk_transfer_buf(us, us->recv_bulk_pipe,
-			data->recv, RIO_RECV_LEN, &partial);
+			data->recv, RIO_RECV_LEN, NULL);
 		if (result != USB_STOR_XFER_GOOD)
 			goto err;
 
@@ -185,23 +185,24 @@ static void rio_karma_destructor(void *extra)
 
 static int rio_karma_init(struct us_data *us)
 {
-	int ret = 0;
 	struct karma_data *data = kzalloc(sizeof(struct karma_data), GFP_NOIO);
 	if (!data)
-		goto out;
+		return -ENOMEM;
 
 	data->recv = kmalloc(RIO_RECV_LEN, GFP_NOIO);
 	if (!data->recv) {
 		kfree(data);
-		goto out;
+		return -ENOMEM;
 	}
 
 	us->extra = data;
 	us->extra_destructor = rio_karma_destructor;
-	ret = rio_karma_send_command(RIO_ENTER_STORAGE, us);
-	data->in_storage = (ret == 0);
-out:
-	return ret;
+	if (rio_karma_send_command(RIO_ENTER_STORAGE, us))
+		return -EIO;
+
+	data->in_storage = 1;
+
+	return 0;
 }
 
 static struct scsi_host_template karma_host_template;

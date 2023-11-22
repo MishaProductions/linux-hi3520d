@@ -190,6 +190,7 @@ static struct tegra_emc *emc_ensure_emc_driver(struct tegra_clk_emc *tegra)
 
 	tegra->emc = platform_get_drvdata(pdev);
 	if (!tegra->emc) {
+		put_device(&pdev->dev);
 		pr_err("%s: cannot find EMC driver\n", __func__);
 		return NULL;
 	}
@@ -378,7 +379,7 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 
 	err = of_property_read_u32(node, "clock-frequency", &tmp);
 	if (err) {
-		pr_err("timing %s: failed to read rate\n", node->full_name);
+		pr_err("timing %pOF: failed to read rate\n", node);
 		return err;
 	}
 
@@ -386,8 +387,7 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 
 	err = of_property_read_u32(node, "nvidia,parent-clock-frequency", &tmp);
 	if (err) {
-		pr_err("timing %s: failed to read parent rate\n",
-		       node->full_name);
+		pr_err("timing %pOF: failed to read parent rate\n", node);
 		return err;
 	}
 
@@ -395,8 +395,7 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 
 	timing->parent = of_clk_get_by_name(node, "emc-parent");
 	if (IS_ERR(timing->parent)) {
-		pr_err("timing %s: failed to get parent clock\n",
-		       node->full_name);
+		pr_err("timing %pOF: failed to get parent clock\n", node);
 		return PTR_ERR(timing->parent);
 	}
 
@@ -409,8 +408,8 @@ static int load_one_timing_from_dt(struct tegra_clk_emc *tegra,
 		}
 	}
 	if (timing->parent_index == 0xff) {
-		pr_err("timing %s: %s is not a valid parent\n",
-		       node->full_name, __clk_get_name(timing->parent));
+		pr_err("timing %pOF: %s is not a valid parent\n",
+		       node, __clk_get_name(timing->parent));
 		clk_put(timing->parent);
 		return -EINVAL;
 	}

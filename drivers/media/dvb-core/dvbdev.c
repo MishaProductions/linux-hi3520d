@@ -15,11 +15,9 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
- *
  */
+
+#define pr_fmt(fmt) "dvbdev: " fmt
 
 #include <linux/types.h>
 #include <linux/errno.h>
@@ -43,7 +41,11 @@ static int dvbdev_debug;
 module_param(dvbdev_debug, int, 0644);
 MODULE_PARM_DESC(dvbdev_debug, "Turn on/off device debugging (default:off).");
 
-#define dprintk if (dvbdev_debug) printk
+#define dprintk(fmt, arg...) do {					\
+	if (dvbdev_debug)						\
+		printk(KERN_DEBUG pr_fmt("%s: " fmt),			\
+		       __func__, ##arg);				\
+} while (0)
 
 static LIST_HEAD(dvb_adapter_list);
 static DEFINE_MUTEX(dvbdev_register_lock);
@@ -82,7 +84,7 @@ static int dvb_device_open(struct inode *inode, struct file *file)
 		new_fops = fops_get(dvbdev->fops);
 		if (!new_fops)
 			goto fail;
-		file->private_data = dvbdev;
+		file->private_data = dvb_device_get(dvbdev);
 		replace_fops(file, new_fops);
 		if (file->f_op->open)
 			err = file->f_op->open(inode, file);
@@ -146,6 +148,9 @@ int dvb_generic_release(struct inode *inode, struct file *file)
 	}
 
 	dvbdev->users++;
+
+	dvb_device_put(dvbdev);
+
 	return 0;
 }
 EXPORT_SYMBOL(dvb_generic_release);
@@ -317,6 +322,7 @@ static int dvb_create_media_entity(struct dvb_device *dvbdev,
 				       GFP_KERNEL);
 		if (!dvbdev->pads) {
 			kfree(dvbdev->entity);
+			dvbdev->entity = NULL;
 			return -ENOMEM;
 		}
 	}
@@ -357,7 +363,7 @@ static int dvb_create_media_entity(struct dvb_device *dvbdev,
 	if (ret)
 		return ret;
 
-	printk(KERN_DEBUG "%s: media entity '%s' registered.\n",
+	pr_info("%s: media entity '%s' registered.\n",
 		__func__, dvbdev->entity->name);
 
 	return 0;
@@ -441,7 +447,7 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 	if ((id = dvbdev_get_free_id (adap, type)) < 0){
 		mutex_unlock(&dvbdev_register_lock);
 		*pdvbdev = NULL;
-		printk(KERN_ERR "%s: couldn't find free device id\n", __func__);
+		pr_err("%s: couldn't find free device id\n", __func__);
 		return -ENFILE;
 	}
 
@@ -461,6 +467,7 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 	}
 
 	memcpy(dvbdev, template, sizeof(struct dvb_device));
+	kref_init(&dvbdev->ref);
 	dvbdev->type = type;
 	dvbdev->id = id;
 	dvbdev->adapter = adap;
@@ -491,13 +498,12 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 #endif
 
 	dvbdev->minor = minor;
-	dvb_minors[minor] = dvbdev;
+	dvb_minors[minor] = dvb_device_get(dvbdev);
 	up_write(&minor_rwsem);
 
 	ret = dvb_register_media_device(dvbdev, type, minor, demux_sink_pads);
 	if (ret) {
-		printk(KERN_ERR
-		      "%s: dvb_register_media_device failed to create the mediagraph\n",
+		pr_err("%s: dvb_register_media_device failed to create the mediagraph\n",
 		      __func__);
 
 		dvb_media_device_free(dvbdev);
@@ -514,11 +520,11 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 			       MKDEV(DVB_MAJOR, minor),
 			       dvbdev, "dvb%d.%s%d", adap->num, dnames[type], id);
 	if (IS_ERR(clsdev)) {
-		printk(KERN_ERR "%s: failed to create device dvb%d.%s%d (%ld)\n",
+		pr_err("%s: failed to create device dvb%d.%s%d (%ld)\n",
 		       __func__, adap->num, dnames[type], id, PTR_ERR(clsdev));
 		return PTR_ERR(clsdev);
 	}
-	dprintk(KERN_DEBUG "DVB: register adapter%d/%s%d @ minor: %i (0x%02x)\n",
+	dprintk("DVB: register adapter%d/%s%d @ minor: %i (0x%02x)\n",
 		adap->num, dnames[type], id, minor, minor);
 
 	return 0;
@@ -526,13 +532,14 @@ int dvb_register_device(struct dvb_adapter *adap, struct dvb_device **pdvbdev,
 EXPORT_SYMBOL(dvb_register_device);
 
 
-void dvb_unregister_device(struct dvb_device *dvbdev)
+void dvb_remove_device(struct dvb_device *dvbdev)
 {
 	if (!dvbdev)
 		return;
 
 	down_write(&minor_rwsem);
 	dvb_minors[dvbdev->minor] = NULL;
+	dvb_device_put(dvbdev);
 	up_write(&minor_rwsem);
 
 	dvb_media_device_free(dvbdev);
@@ -540,8 +547,38 @@ void dvb_unregister_device(struct dvb_device *dvbdev)
 	device_destroy(dvb_class, MKDEV(DVB_MAJOR, dvbdev->minor));
 
 	list_del (&dvbdev->list_head);
+}
+EXPORT_SYMBOL(dvb_remove_device);
+
+
+static void dvb_free_device(struct kref *ref)
+{
+	struct dvb_device *dvbdev = container_of(ref, struct dvb_device, ref);
+
 	kfree (dvbdev->fops);
 	kfree (dvbdev);
+}
+
+
+struct dvb_device *dvb_device_get(struct dvb_device *dvbdev)
+{
+	kref_get(&dvbdev->ref);
+	return dvbdev;
+}
+EXPORT_SYMBOL(dvb_device_get);
+
+
+void dvb_device_put(struct dvb_device *dvbdev)
+{
+	if (dvbdev)
+		kref_put(&dvbdev->ref, dvb_free_device);
+}
+
+
+void dvb_unregister_device(struct dvb_device *dvbdev)
+{
+	dvb_remove_device(dvbdev);
+	dvb_device_put(dvbdev);
 }
 EXPORT_SYMBOL(dvb_unregister_device);
 
@@ -811,7 +848,7 @@ int dvb_register_adapter(struct dvb_adapter *adap, const char *name,
 	memset (adap, 0, sizeof(struct dvb_adapter));
 	INIT_LIST_HEAD (&adap->device_list);
 
-	printk(KERN_INFO "DVB: registering new adapter (%s)\n", name);
+	pr_info("DVB: registering new adapter (%s)\n", name);
 
 	adap->num = num;
 	adap->name = name;
@@ -929,13 +966,13 @@ static int __init init_dvbdev(void)
 	dev_t dev = MKDEV(DVB_MAJOR, 0);
 
 	if ((retval = register_chrdev_region(dev, MAX_DVB_MINORS, "DVB")) != 0) {
-		printk(KERN_ERR "dvb-core: unable to get major %d\n", DVB_MAJOR);
+		pr_err("dvb-core: unable to get major %d\n", DVB_MAJOR);
 		return retval;
 	}
 
 	cdev_init(&dvb_device_cdev, &dvb_device_fops);
 	if ((retval = cdev_add(&dvb_device_cdev, dev, MAX_DVB_MINORS)) != 0) {
-		printk(KERN_ERR "dvb-core: unable register character device\n");
+		pr_err("dvb-core: unable register character device\n");
 		goto error;
 	}
 

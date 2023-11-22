@@ -952,6 +952,7 @@ static int qp_notify_peer_local(bool attach, struct vmci_handle handle)
 	u32 context_id = vmci_get_context_id();
 	struct vmci_event_qp ev;
 
+	memset(&ev, 0, sizeof(ev));
 	ev.msg.hdr.dst = vmci_make_handle(context_id, VMCI_EVENT_HANDLER);
 	ev.msg.hdr.src = vmci_make_handle(VMCI_HYPERVISOR_CONTEXT_ID,
 					  VMCI_CONTEXT_RESOURCE_ID);
@@ -1563,6 +1564,7 @@ static int qp_notify_peer(bool attach,
 	 * kernel.
 	 */
 
+	memset(&ev, 0, sizeof(ev));
 	ev.msg.hdr.dst = vmci_make_handle(peer_id, VMCI_EVENT_HANDLER);
 	ev.msg.hdr.src = vmci_make_handle(VMCI_HYPERVISOR_CONTEXT_ID,
 					  VMCI_CONTEXT_RESOURCE_ID);
@@ -2240,14 +2242,8 @@ int vmci_qp_broker_detach(struct vmci_handle handle, struct vmci_ctx *context)
 					handle.context, handle.resource,
 					result);
 
-			if (entry->vmci_page_files)
-				qp_host_unregister_user_memory(entry->produce_q,
-							       entry->
-							       consume_q);
-			else
-				qp_host_unregister_user_memory(entry->produce_q,
-							       entry->
-							       consume_q);
+			qp_host_unregister_user_memory(entry->produce_q,
+						       entry->consume_q);
 
 		}
 
@@ -2941,7 +2937,7 @@ int vmci_qpair_get_produce_indexes(const struct vmci_qp *qpair,
 EXPORT_SYMBOL_GPL(vmci_qpair_get_produce_indexes);
 
 /*
- * vmci_qpair_get_consume_indexes() - Retrieves the indexes of the comsumer.
+ * vmci_qpair_get_consume_indexes() - Retrieves the indexes of the consumer.
  * @qpair:      Pointer to the queue pair struct.
  * @consumer_tail:      Reference used for storing consumer tail index.
  * @producer_head:      Reference used for storing the producer head index.

@@ -59,12 +59,7 @@ struct dm_hw_stat_delta {
 	unsigned long last_drop_val;
 };
 
-static struct genl_family net_drop_monitor_family = {
-	.id             = GENL_ID_GENERATE,
-	.hdrsize        = 0,
-	.name           = "NET_DM",
-	.version        = 2,
-};
+static struct genl_family net_drop_monitor_family;
 
 static DEFINE_PER_CPU(struct per_cpu_dm_data, dm_cpu_data);
 
@@ -224,13 +219,17 @@ static void trace_napi_poll_hit(void *ignore, struct napi_struct *napi,
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(new_stat, &hw_stats_list, list) {
+		struct net_device *dev;
+
 		/*
 		 * only add a note to our monitor buffer if:
 		 * 1) this is the dev we received on
 		 * 2) its after the last_rx delta
 		 * 3) our rx_dropped count has gone up
 		 */
-		if ((new_stat->dev == napi->dev)  &&
+		/* Paired with WRITE_ONCE() in dropmon_net_event() */
+		dev = READ_ONCE(new_stat->dev);
+		if ((dev == napi->dev)  &&
 		    (time_after(jiffies, new_stat->last_rx + dm_hw_check_delta)) &&
 		    (napi->dev->stats.rx_dropped != new_stat->last_drop_val)) {
 			trace_drop_common(NULL, NULL);
@@ -345,7 +344,10 @@ static int dropmon_net_event(struct notifier_block *ev_block,
 		mutex_lock(&trace_state_mutex);
 		list_for_each_entry_safe(new_stat, tmp, &hw_stats_list, list) {
 			if (new_stat->dev == dev) {
-				new_stat->dev = NULL;
+
+				/* Paired with READ_ONCE() in trace_napi_poll_hit() */
+				WRITE_ONCE(new_stat->dev, NULL);
+
 				if (trace_state == TRACE_OFF) {
 					list_del_rcu(&new_stat->list);
 					kfree_rcu(new_stat, rcu);
@@ -375,6 +377,17 @@ static const struct genl_ops dropmon_ops[] = {
 	},
 };
 
+static struct genl_family net_drop_monitor_family __ro_after_init = {
+	.hdrsize        = 0,
+	.name           = "NET_DM",
+	.version        = 2,
+	.module		= THIS_MODULE,
+	.ops		= dropmon_ops,
+	.n_ops		= ARRAY_SIZE(dropmon_ops),
+	.mcgrps		= dropmon_mcgrps,
+	.n_mcgrps	= ARRAY_SIZE(dropmon_mcgrps),
+};
+
 static struct notifier_block dropmon_net_notifier = {
 	.notifier_call = dropmon_net_event
 };
@@ -391,8 +404,7 @@ static int __init init_net_drop_monitor(void)
 		return -ENOSPC;
 	}
 
-	rc = genl_register_family_with_ops_groups(&net_drop_monitor_family,
-						  dropmon_ops, dropmon_mcgrps);
+	rc = genl_register_family(&net_drop_monitor_family);
 	if (rc) {
 		pr_err("Could not create drop monitor netlink family\n");
 		return rc;
@@ -410,9 +422,8 @@ static int __init init_net_drop_monitor(void)
 	for_each_possible_cpu(cpu) {
 		data = &per_cpu(dm_cpu_data, cpu);
 		INIT_WORK(&data->dm_alert_work, send_dm_alert);
-		init_timer(&data->send_timer);
-		data->send_timer.data = (unsigned long)data;
-		data->send_timer.function = sched_send_work;
+		setup_timer(&data->send_timer, sched_send_work,
+			    (unsigned long)data);
 		spin_lock_init(&data->lock);
 		reset_per_cpu_data(data);
 	}

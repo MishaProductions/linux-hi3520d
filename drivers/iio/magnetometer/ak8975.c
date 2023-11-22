@@ -404,6 +404,7 @@ static int ak8975_power_on(const struct ak8975_data *data)
 	if (ret) {
 		dev_warn(&data->client->dev,
 			 "Failed to enable specified Vid supply\n");
+		regulator_disable(data->vdd);
 		return ret;
 	}
 	/*
@@ -790,6 +791,7 @@ static const struct iio_info ak8975_info = {
 	.driver_module = THIS_MODULE,
 };
 
+#ifdef CONFIG_ACPI
 static const struct acpi_device_id ak_acpi_match[] = {
 	{"AK8975", AK8975},
 	{"AK8963", AK8963},
@@ -799,6 +801,7 @@ static const struct acpi_device_id ak_acpi_match[] = {
 	{ },
 };
 MODULE_DEVICE_TABLE(acpi, ak_acpi_match);
+#endif
 
 static const char *ak8975_match_acpi_device(struct device *dev,
 					    enum asahi_compass_chipset *chipset)

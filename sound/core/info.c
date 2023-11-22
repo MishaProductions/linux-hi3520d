@@ -127,9 +127,9 @@ static loff_t snd_info_entry_llseek(struct file *file, loff_t offset, int orig)
 	entry = data->entry;
 	mutex_lock(&entry->access);
 	if (entry->c.ops->llseek) {
-		offset = entry->c.ops->llseek(entry,
-					      data->file_private_data,
-					      file, offset, orig);
+		ret = entry->c.ops->llseek(entry,
+					   data->file_private_data,
+					   file, offset, orig);
 		goto out;
 	}
 
@@ -344,12 +344,12 @@ static ssize_t snd_info_text_entry_write(struct file *file,
 		}
 	}
 	if (next > buf->len) {
-		char *nbuf = krealloc(buf->buffer, PAGE_ALIGN(next),
-				      GFP_KERNEL | __GFP_ZERO);
+		char *nbuf = kvzalloc(PAGE_ALIGN(next), GFP_KERNEL);
 		if (!nbuf) {
 			err = -ENOMEM;
 			goto error;
 		}
+		kvfree(buf->buffer);
 		buf->buffer = nbuf;
 		buf->len = PAGE_ALIGN(next);
 	}
@@ -427,7 +427,7 @@ static int snd_info_text_entry_release(struct inode *inode, struct file *file)
 	single_release(inode, file);
 	kfree(data->rbuffer);
 	if (data->wbuffer) {
-		kfree(data->wbuffer->buffer);
+		kvfree(data->wbuffer->buffer);
 		kfree(data->wbuffer);
 	}
 
@@ -654,7 +654,6 @@ int snd_info_get_line(struct snd_info_buffer *buffer, char *line, int len)
 	*line = '\0';
 	return 0;
 }
-
 EXPORT_SYMBOL(snd_info_get_line);
 
 /**
@@ -692,7 +691,6 @@ const char *snd_info_get_str(char *dest, const char *src, int len)
 		src++;
 	return src;
 }
-
 EXPORT_SYMBOL(snd_info_get_str);
 
 /*
@@ -753,7 +751,6 @@ struct snd_info_entry *snd_info_create_module_entry(struct module * module,
 		entry->module = module;
 	return entry;
 }
-
 EXPORT_SYMBOL(snd_info_create_module_entry);
 
 /**
@@ -777,7 +774,6 @@ struct snd_info_entry *snd_info_create_card_entry(struct snd_card *card,
 	}
 	return entry;
 }
-
 EXPORT_SYMBOL(snd_info_create_card_entry);
 
 static void snd_info_disconnect(struct snd_info_entry *entry)
@@ -825,7 +821,6 @@ void snd_info_free_entry(struct snd_info_entry * entry)
 		entry->private_free(entry);
 	kfree(entry);
 }
-
 EXPORT_SYMBOL(snd_info_free_entry);
 
 /**
@@ -868,7 +863,6 @@ int snd_info_register(struct snd_info_entry * entry)
 	mutex_unlock(&info_mutex);
 	return 0;
 }
-
 EXPORT_SYMBOL(snd_info_register);
 
 /*

@@ -346,7 +346,7 @@ static enum drbd_role min_role(enum drbd_role role1, enum drbd_role role2)
 
 enum drbd_role conn_highest_role(struct drbd_connection *connection)
 {
-	enum drbd_role role = R_UNKNOWN;
+	enum drbd_role role = R_SECONDARY;
 	struct drbd_peer_device *peer_device;
 	int vnr;
 
@@ -579,11 +579,14 @@ drbd_req_state(struct drbd_device *device, union drbd_state mask,
 	unsigned long flags;
 	union drbd_state os, ns;
 	enum drbd_state_rv rv;
+	void *buffer = NULL;
 
 	init_completion(&done);
 
 	if (f & CS_SERIALIZE)
 		mutex_lock(device->state_mutex);
+	if (f & CS_INHIBIT_MD_IO)
+		buffer = drbd_md_get_buffer(device, __func__);
 
 	spin_lock_irqsave(&device->resource->req_lock, flags);
 	os = drbd_read_state(device);
@@ -636,6 +639,8 @@ drbd_req_state(struct drbd_device *device, union drbd_state mask,
 	}
 
 abort:
+	if (buffer)
+		drbd_md_put_buffer(device);
 	if (f & CS_SERIALIZE)
 		mutex_unlock(device->state_mutex);
 
@@ -660,6 +665,45 @@ _drbd_request_state(struct drbd_device *device, union drbd_state mask,
 
 	wait_event(device->state_wait,
 		   (rv = drbd_req_state(device, mask, val, f)) != SS_IN_TRANSIENT_STATE);
+
+	return rv;
+}
+
+/*
+ * We grab drbd_md_get_buffer(), because we don't want to "fail" the disk while
+ * there is IO in-flight: the transition into D_FAILED for detach purposes
+ * may get misinterpreted as actual IO error in a confused endio function.
+ *
+ * We wrap it all into wait_event(), to retry in case the drbd_req_state()
+ * returns SS_IN_TRANSIENT_STATE.
+ *
+ * To avoid potential deadlock with e.g. the receiver thread trying to grab
+ * drbd_md_get_buffer() while trying to get out of the "transient state", we
+ * need to grab and release the meta data buffer inside of that wait_event loop.
+ */
+static enum drbd_state_rv
+request_detach(struct drbd_device *device)
+{
+	return drbd_req_state(device, NS(disk, D_FAILED),
+			CS_VERBOSE | CS_ORDERED | CS_INHIBIT_MD_IO);
+}
+
+int drbd_request_detach_interruptible(struct drbd_device *device)
+{
+	int ret, rv;
+
+	drbd_suspend_io(device); /* so no-one is stuck in drbd_al_begin_io */
+	wait_event_interruptible(device->state_wait,
+		(rv = request_detach(device)) != SS_IN_TRANSIENT_STATE);
+	drbd_resume_io(device);
+
+	ret = wait_event_interruptible(device->misc_wait,
+			device->state.disk != D_FAILED);
+
+	if (rv == SS_IS_DISKLESS)
+		rv = SS_NOTHING_TO_DO;
+	if (ret)
+		rv = ERR_INTR;
 
 	return rv;
 }
@@ -1505,7 +1549,7 @@ int drbd_bitmap_io_from_worker(struct drbd_device *device,
 	return rv;
 }
 
-void notify_resource_state_change(struct sk_buff *skb,
+int notify_resource_state_change(struct sk_buff *skb,
 				  unsigned int seq,
 				  struct drbd_resource_state_change *resource_state_change,
 				  enum drbd_notification_type type)
@@ -1518,10 +1562,10 @@ void notify_resource_state_change(struct sk_buff *skb,
 		.res_susp_fen = resource_state_change->susp_fen[NEW],
 	};
 
-	notify_resource_state(skb, seq, resource, &resource_info, type);
+	return notify_resource_state(skb, seq, resource, &resource_info, type);
 }
 
-void notify_connection_state_change(struct sk_buff *skb,
+int notify_connection_state_change(struct sk_buff *skb,
 				    unsigned int seq,
 				    struct drbd_connection_state_change *connection_state_change,
 				    enum drbd_notification_type type)
@@ -1532,10 +1576,10 @@ void notify_connection_state_change(struct sk_buff *skb,
 		.conn_role = connection_state_change->peer_role[NEW],
 	};
 
-	notify_connection_state(skb, seq, connection, &connection_info, type);
+	return notify_connection_state(skb, seq, connection, &connection_info, type);
 }
 
-void notify_device_state_change(struct sk_buff *skb,
+int notify_device_state_change(struct sk_buff *skb,
 				unsigned int seq,
 				struct drbd_device_state_change *device_state_change,
 				enum drbd_notification_type type)
@@ -1545,10 +1589,10 @@ void notify_device_state_change(struct sk_buff *skb,
 		.dev_disk_state = device_state_change->disk_state[NEW],
 	};
 
-	notify_device_state(skb, seq, device, &device_info, type);
+	return notify_device_state(skb, seq, device, &device_info, type);
 }
 
-void notify_peer_device_state_change(struct sk_buff *skb,
+int notify_peer_device_state_change(struct sk_buff *skb,
 				     unsigned int seq,
 				     struct drbd_peer_device_state_change *p,
 				     enum drbd_notification_type type)
@@ -1562,7 +1606,7 @@ void notify_peer_device_state_change(struct sk_buff *skb,
 		.peer_resync_susp_dependency = p->resync_susp_dependency[NEW],
 	};
 
-	notify_peer_device_state(skb, seq, peer_device, &peer_device_info, type);
+	return notify_peer_device_state(skb, seq, peer_device, &peer_device_info, type);
 }
 
 static void broadcast_state_change(struct drbd_state_change *state_change)
@@ -1570,7 +1614,7 @@ static void broadcast_state_change(struct drbd_state_change *state_change)
 	struct drbd_resource_state_change *resource_state_change = &state_change->resource[0];
 	bool resource_state_has_changed;
 	unsigned int n_device, n_connection, n_peer_device, n_peer_devices;
-	void (*last_func)(struct sk_buff *, unsigned int, void *,
+	int (*last_func)(struct sk_buff *, unsigned int, void *,
 			  enum drbd_notification_type) = NULL;
 	void *uninitialized_var(last_arg);
 

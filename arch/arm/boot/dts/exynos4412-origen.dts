@@ -90,7 +90,7 @@
 };
 
 &ehci {
-	samsung,vbus-gpio = <&gpx3 5 1>;
+	samsung,vbus-gpio = <&gpx3 5 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 
 	port@1{
@@ -488,7 +488,6 @@
 	pinctrl-names = "default";
 	status = "okay";
 
-	num-slots = <1>;
 	broken-cd;
 	card-detect-delay = <200>;
 	samsung,dw-mshc-ciu-div = <3>;
@@ -539,9 +538,5 @@
 };
 
 &serial_3 {
-	status = "okay";
-};
-
-&watchdog {
 	status = "okay";
 };

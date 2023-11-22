@@ -92,7 +92,7 @@ struct fbtft_ops {
 	void (*unregister_backlight)(struct fbtft_par *par);
 
 	int (*set_var)(struct fbtft_par *par);
-	int (*set_gamma)(struct fbtft_par *par, unsigned long *curves);
+	int (*set_gamma)(struct fbtft_par *par, u32 *curves);
 };
 
 /**
@@ -124,7 +124,7 @@ struct fbtft_display {
 	unsigned int bpp;
 	unsigned int fps;
 	int txbuflen;
-	int *init_sequence;
+	const s16 *init_sequence;
 	char *gamma;
 	int gamma_num;
 	int gamma_len;
@@ -209,7 +209,6 @@ struct fbtft_par {
 	u32 pseudo_palette[16];
 	struct {
 		void *buf;
-		dma_addr_t dma;
 		size_t len;
 	} txbuf;
 	u8 *buf;
@@ -229,10 +228,10 @@ struct fbtft_par {
 		int led[16];
 		int aux[16];
 	} gpio;
-	int *init_sequence;
+	const s16 *init_sequence;
 	struct {
 		struct mutex lock;
-		unsigned long *curves;
+		u32 *curves;
 		int num_values;
 		int num_curves;
 	} gamma;
@@ -241,7 +240,6 @@ struct fbtft_par {
 	ktime_t update_time;
 	bool bgr;
 	void *extra;
-	bool polarity;
 };
 
 #define NUMARGS(...)  (sizeof((int[]){__VA_ARGS__})/sizeof(int))
@@ -250,6 +248,7 @@ struct fbtft_par {
 	par->fbtftops.write_register(par, NUMARGS(__VA_ARGS__), __VA_ARGS__)
 
 /* fbtft-core.c */
+int fbtft_write_buf_dc(struct fbtft_par *par, void *buf, size_t len, int dc);
 void fbtft_dbg_hex(const struct device *dev, int groupsize,
 		   void *buf, size_t len, const char *fmt, ...);
 struct fb_info *fbtft_framebuffer_alloc(struct fbtft_display *display,
@@ -343,7 +342,10 @@ static int __init fbtft_driver_module_init(void)                           \
 	ret = spi_register_driver(&fbtft_driver_spi_driver);               \
 	if (ret < 0)                                                       \
 		return ret;                                                \
-	return platform_driver_register(&fbtft_driver_platform_driver);    \
+	ret = platform_driver_register(&fbtft_driver_platform_driver);     \
+	if (ret < 0)                                                       \
+		spi_unregister_driver(&fbtft_driver_spi_driver);           \
+	return ret;                                                        \
 }                                                                          \
 									   \
 static void __exit fbtft_driver_module_exit(void)                          \

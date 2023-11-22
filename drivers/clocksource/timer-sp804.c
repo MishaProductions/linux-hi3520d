@@ -227,6 +227,11 @@ static int __init sp804_of_init(struct device_node *np)
 	struct clk *clk1, *clk2;
 	const char *name = of_get_property(np, "compatible", NULL);
 
+	if (initialized) {
+		pr_debug("%pOF: skipping further SP804 timer device\n", np);
+		return 0;
+	}
+
 	base = of_iomap(np, 0);
 	if (!base)
 		return -ENXIO;
@@ -234,11 +239,6 @@ static int __init sp804_of_init(struct device_node *np)
 	/* Ensure timers are disabled */
 	writel(0, base + TIMER_CTRL);
 	writel(0, base + TIMER_2_BASE + TIMER_CTRL);
-
-	if (initialized || !of_device_is_available(np)) {
-		ret = -EINVAL;
-		goto err;
-	}
 
 	clk1 = of_clk_get(np, 0);
 	if (IS_ERR(clk1))
@@ -287,7 +287,7 @@ err:
 	iounmap(base);
 	return ret;
 }
-CLOCKSOURCE_OF_DECLARE(sp804, "arm,sp804", sp804_of_init);
+TIMER_OF_DECLARE(sp804, "arm,sp804", sp804_of_init);
 
 static int __init integrator_cp_of_init(struct device_node *np)
 {
@@ -299,13 +299,13 @@ static int __init integrator_cp_of_init(struct device_node *np)
 
 	base = of_iomap(np, 0);
 	if (!base) {
-		pr_err("Failed to iomap");
+		pr_err("Failed to iomap\n");
 		return -ENXIO;
 	}
 
 	clk = of_clk_get(np, 0);
 	if (IS_ERR(clk)) {
-		pr_err("Failed to get clock");
+		pr_err("Failed to get clock\n");
 		return PTR_ERR(clk);
 	}
 
@@ -335,4 +335,4 @@ err:
 	iounmap(base);
 	return ret;
 }
-CLOCKSOURCE_OF_DECLARE(intcp, "arm,integrator-cp-timer", integrator_cp_of_init);
+TIMER_OF_DECLARE(intcp, "arm,integrator-cp-timer", integrator_cp_of_init);

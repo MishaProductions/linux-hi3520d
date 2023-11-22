@@ -483,13 +483,6 @@ void gfs2_rgrp_verify(struct gfs2_rgrpd *rgd)
 	}
 }
 
-static inline int rgrp_contains_block(struct gfs2_rgrpd *rgd, u64 block)
-{
-	u64 first = rgd->rd_data0;
-	u64 last = first + rgd->rd_data;
-	return first <= block && block < last;
-}
-
 /**
  * gfs2_blk2rgrpd - Find resource group for a given data/meta block number
  * @sdp: The GFS2 superblock
@@ -721,11 +714,8 @@ void gfs2_clear_rgrpd(struct gfs2_sbd *sdp)
 		rb_erase(n, &sdp->sd_rindex_tree);
 
 		if (gl) {
-			spin_lock(&gl->gl_lockref.lock);
-			gl->gl_object = NULL;
-			spin_unlock(&gl->gl_lockref.lock);
+			glock_clear_object(gl, rgd);
 			gfs2_rgrp_brelse(rgd);
-			gfs2_glock_add_to_lru(gl);
 			gfs2_glock_put(gl);
 		}
 
@@ -917,14 +907,14 @@ static int read_rindex_entry(struct gfs2_inode *ip)
 	rgd->rd_bitbytes = be32_to_cpu(buf.ri_bitbytes);
 	spin_lock_init(&rgd->rd_rsspin);
 
-	error = compute_bitstructs(rgd);
-	if (error)
-		goto fail;
-
 	error = gfs2_glock_get(sdp, rgd->rd_addr,
 			       &gfs2_rgrp_glops, CREATE, &rgd->rd_gl);
 	if (error)
 		goto fail;
+
+	error = compute_bitstructs(rgd);
+	if (error)
+		goto fail_glock;
 
 	rgd->rd_rgl = (struct gfs2_rgrp_lvb *)rgd->rd_gl->gl_lksb.sb_lvbptr;
 	rgd->rd_flags &= ~(GFS2_RDF_UPTODATE | GFS2_RDF_PREFERRED);
@@ -934,7 +924,7 @@ static int read_rindex_entry(struct gfs2_inode *ip)
 	error = rgd_insert(rgd);
 	spin_unlock(&sdp->sd_rindex_spin);
 	if (!error) {
-		rgd->rd_gl->gl_object = rgd;
+		glock_set_object(rgd->rd_gl, rgd);
 		rgd->rd_gl->gl_vm.start = (rgd->rd_addr * bsize) & PAGE_MASK;
 		rgd->rd_gl->gl_vm.end = PAGE_ALIGN((rgd->rd_addr +
 						    rgd->rd_length) * bsize) - 1;
@@ -942,6 +932,7 @@ static int read_rindex_entry(struct gfs2_inode *ip)
 	}
 
 	error = 0; /* someone else read in the rgrp; free it and ignore it */
+fail_glock:
 	gfs2_glock_put(rgd->rd_gl);
 
 fail:
@@ -1390,7 +1381,8 @@ int gfs2_fitrim(struct file *filp, void __user *argp)
 
 	start = r.start >> bs_shift;
 	end = start + (r.len >> bs_shift);
-	minlen = max_t(u64, r.minlen,
+	minlen = max_t(u64, r.minlen, sdp->sd_sb.sb_bsize);
+	minlen = max_t(u64, minlen,
 		       q->limits.discard_granularity) >> bs_shift;
 
 	if (end <= start || minlen > sdp->sd_max_rg_data)

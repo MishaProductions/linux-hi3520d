@@ -186,21 +186,13 @@ static int dvo_dbg_show(struct seq_file *s, void *data)
 	DBGFS_DUMP(DVO_LUT_PROG_MID);
 	DBGFS_DUMP(DVO_LUT_PROG_HIGH);
 	dvo_dbg_awg_microcode(s, dvo->regs + DVO_DIGSYNC_INSTR_I);
-	seq_puts(s, "\n");
-
+	seq_putc(s, '\n');
 	return 0;
 }
 
 static struct drm_info_list dvo_debugfs_files[] = {
 	{ "dvo", dvo_dbg_show, 0, NULL },
 };
-
-static void dvo_debugfs_exit(struct sti_dvo *dvo, struct drm_minor *minor)
-{
-	drm_debugfs_remove_files(dvo_debugfs_files,
-				 ARRAY_SIZE(dvo_debugfs_files),
-				 minor);
-}
 
 static int dvo_debugfs_init(struct sti_dvo *dvo, struct drm_minor *minor)
 {
@@ -296,7 +288,7 @@ static void sti_dvo_set_mode(struct drm_bridge *bridge,
 
 	DRM_DEBUG_DRIVER("\n");
 
-	memcpy(&dvo->mode, mode, sizeof(struct drm_display_mode));
+	drm_mode_copy(&dvo->mode, mode);
 
 	/* According to the path used (main or aux), the dvo clocks should
 	 * have a different parent clock. */
@@ -354,8 +346,9 @@ static int sti_dvo_connector_get_modes(struct drm_connector *connector)
 
 #define CLK_TOLERANCE_HZ 50
 
-static int sti_dvo_connector_mode_valid(struct drm_connector *connector,
-					struct drm_display_mode *mode)
+static enum drm_mode_status
+sti_dvo_connector_mode_valid(struct drm_connector *connector,
+			     struct drm_display_mode *mode)
 {
 	int target = mode->clock * 1000;
 	int target_min = target - CLK_TOLERANCE_HZ;
@@ -420,7 +413,6 @@ static int sti_dvo_late_register(struct drm_connector *connector)
 }
 
 static const struct drm_connector_funcs sti_dvo_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.detect = sti_dvo_connector_detect,
 	.destroy = drm_connector_cleanup,
@@ -478,14 +470,13 @@ static int sti_dvo_bind(struct device *dev, struct device *master, void *data)
 		return err;
 	}
 
-	err = drm_bridge_attach(drm_dev, bridge);
+	err = drm_bridge_attach(encoder, bridge, NULL);
 	if (err) {
 		DRM_ERROR("Failed to attach bridge\n");
 		return err;
 	}
 
 	dvo->bridge = bridge;
-	encoder->bridge = bridge;
 	connector->encoder = encoder;
 	dvo->encoder = encoder;
 
@@ -515,9 +506,6 @@ static void sti_dvo_unbind(struct device *dev,
 			   struct device *master, void *data)
 {
 	struct sti_dvo *dvo = dev_get_drvdata(dev);
-	struct drm_device *drm_dev = data;
-
-	dvo_debugfs_exit(dvo, drm_dev->primary);
 
 	drm_bridge_remove(dvo->bridge);
 }
@@ -594,7 +582,7 @@ static int sti_dvo_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id dvo_of_match[] = {
+static const struct of_device_id dvo_of_match[] = {
 	{ .compatible = "st,stih407-dvo", },
 	{ /* end node */ }
 };

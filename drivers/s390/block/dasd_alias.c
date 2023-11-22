@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * PAV alias management for the DASD ECKD discipline
  *
@@ -674,12 +675,12 @@ int dasd_alias_remove_device(struct dasd_device *device)
 struct dasd_device *dasd_alias_get_start_dev(struct dasd_device *base_device)
 {
 	struct dasd_eckd_private *alias_priv, *private = base_device->private;
-	struct alias_pav_group *group = private->pavgroup;
 	struct alias_lcu *lcu = private->lcu;
 	struct dasd_device *alias_device;
+	struct alias_pav_group *group;
 	unsigned long flags;
 
-	if (!group || !lcu)
+	if (!lcu)
 		return NULL;
 	if (lcu->pav == NO_PAV ||
 	    lcu->flags & (NEED_UAC_UPDATE | UPDATE_PENDING))
@@ -696,6 +697,11 @@ struct dasd_device *dasd_alias_get_start_dev(struct dasd_device *base_device)
 	}
 
 	spin_lock_irqsave(&lcu->lock, flags);
+	group = private->pavgroup;
+	if (!group) {
+		spin_unlock_irqrestore(&lcu->lock, flags);
+		return NULL;
+	}
 	alias_device = group->next;
 	if (!alias_device) {
 		if (list_empty(&group->aliaslist)) {
@@ -791,7 +797,6 @@ static void flush_all_alias_devices_on_lcu(struct alias_lcu *lcu)
 	struct alias_pav_group *pavgroup;
 	struct dasd_device *device, *temp;
 	struct dasd_eckd_private *private;
-	int rc;
 	unsigned long flags;
 	LIST_HEAD(active);
 
@@ -822,7 +827,7 @@ static void flush_all_alias_devices_on_lcu(struct alias_lcu *lcu)
 		device = list_first_entry(&active, struct dasd_device,
 					  alias_list);
 		spin_unlock_irqrestore(&lcu->lock, flags);
-		rc = dasd_flush_device_queue(device);
+		dasd_flush_device_queue(device);
 		spin_lock_irqsave(&lcu->lock, flags);
 		/*
 		 * only move device around if it wasn't moved away while we

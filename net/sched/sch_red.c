@@ -61,6 +61,7 @@ static int red_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 {
 	struct red_sched_data *q = qdisc_priv(sch);
 	struct Qdisc *child = q->qdisc;
+	unsigned int len;
 	int ret;
 
 	q->vars.qavg = red_calc_qavg(&q->parms,
@@ -96,9 +97,10 @@ static int red_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 		break;
 	}
 
+	len = qdisc_pkt_len(skb);
 	ret = qdisc_enqueue(skb, child, to_free);
 	if (likely(ret == NET_XMIT_SUCCESS)) {
-		qdisc_qstats_backlog_inc(sch, skb);
+		sch->qstats.backlog += len;
 		sch->q.qlen++;
 	} else if (net_xmit_drop_count(ret)) {
 		q->stats.pdrop++;
@@ -174,7 +176,7 @@ static int red_change(struct Qdisc *sch, struct nlattr *opt)
 	if (opt == NULL)
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_RED_MAX, opt, red_policy);
+	err = nla_parse_nested(tb, TCA_RED_MAX, opt, red_policy, NULL);
 	if (err < 0)
 		return err;
 
@@ -194,6 +196,9 @@ static int red_change(struct Qdisc *sch, struct nlattr *opt)
 		child = fifo_create_dflt(sch, &bfifo_qdisc_ops, ctl->limit);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
+
+		/* child is fifo, no need to check for noop_qdisc */
+		qdisc_hash_add(child, true);
 	}
 
 	sch_tree_lock(sch);
@@ -314,13 +319,9 @@ static struct Qdisc *red_leaf(struct Qdisc *sch, unsigned long arg)
 	return q->qdisc;
 }
 
-static unsigned long red_get(struct Qdisc *sch, u32 classid)
+static unsigned long red_find(struct Qdisc *sch, u32 classid)
 {
 	return 1;
-}
-
-static void red_put(struct Qdisc *sch, unsigned long arg)
-{
 }
 
 static void red_walk(struct Qdisc *sch, struct qdisc_walker *walker)
@@ -338,8 +339,7 @@ static void red_walk(struct Qdisc *sch, struct qdisc_walker *walker)
 static const struct Qdisc_class_ops red_class_ops = {
 	.graft		=	red_graft,
 	.leaf		=	red_leaf,
-	.get		=	red_get,
-	.put		=	red_put,
+	.find		=	red_find,
 	.walk		=	red_walk,
 	.dump		=	red_dump_class,
 };

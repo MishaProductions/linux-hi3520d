@@ -137,7 +137,7 @@ static void inet_frags_free_cb(void *ptr, void *arg)
 	spin_lock_bh(&fq->lock);
 	if (!(fq->flags & INET_FRAG_COMPLETE)) {
 		fq->flags |= INET_FRAG_COMPLETE;
-		atomic_dec(&fq->refcnt);
+		refcount_dec(&fq->refcnt);
 	}
 	spin_unlock_bh(&fq->lock);
 
@@ -155,14 +155,14 @@ EXPORT_SYMBOL(inet_frags_exit_net);
 void inet_frag_kill(struct inet_frag_queue *fq)
 {
 	if (del_timer(&fq->timer))
-		atomic_dec(&fq->refcnt);
+		refcount_dec(&fq->refcnt);
 
 	if (!(fq->flags & INET_FRAG_COMPLETE)) {
 		struct netns_frags *nf = fq->net;
 
 		fq->flags |= INET_FRAG_COMPLETE;
 		rhashtable_remove_fast(&nf->rhashtable, &fq->node, nf->f->rhash_params);
-		atomic_dec(&fq->refcnt);
+		refcount_dec(&fq->refcnt);
 	}
 }
 EXPORT_SYMBOL(inet_frag_kill);
@@ -250,9 +250,9 @@ static struct inet_frag_queue *inet_frag_alloc(struct netns_frags *nf,
 	f->constructor(q, arg);
 	add_frag_mem_limit(nf, f->qsize);
 
-	setup_timer(&q->timer, f->frag_expire, (unsigned long)q);
+	timer_setup(&q->timer, f->frag_expire, 0);
 	spin_lock_init(&q->lock);
-	atomic_set(&q->refcnt, 3);
+	refcount_set(&q->refcnt, 3);
 
 	return q;
 }
@@ -281,7 +281,6 @@ static struct inet_frag_queue *inet_frag_create(struct netns_frags *nf,
 	}
 	return q;
 }
-EXPORT_SYMBOL(inet_frag_create);
 
 /* TODO : call from rcu_read_lock() and no longer use refcount_inc_not_zero() */
 struct inet_frag_queue *inet_frag_find(struct netns_frags *nf, void *key)
@@ -289,15 +288,17 @@ struct inet_frag_queue *inet_frag_find(struct netns_frags *nf, void *key)
 	struct inet_frag_queue *fq = NULL, *prev;
 
 	rcu_read_lock();
+
 	prev = rhashtable_lookup(&nf->rhashtable, key, nf->f->rhash_params);
 	if (!prev)
 		fq = inet_frag_create(nf, key, &prev);
 	if (prev && !IS_ERR(prev)) {
 		fq = prev;
-		if (!atomic_inc_not_zero(&fq->refcnt))
+		if (!refcount_inc_not_zero(&fq->refcnt))
 			fq = NULL;
 	}
 	rcu_read_unlock();
+
 	return fq;
 }
 EXPORT_SYMBOL(inet_frag_find);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Split spinlock implementation out into its own file, so it can be
  * compiled in a FTRACE-compatible way.
@@ -80,6 +81,7 @@ void xen_init_lock_cpu(int cpu)
 	     cpu, per_cpu(lock_kicker_irq, cpu));
 
 	name = kasprintf(GFP_KERNEL, "spinlock%d", cpu);
+	per_cpu(irq_name, cpu) = name;
 	irq = bind_ipi_to_irqhandler(XEN_SPIN_UNLOCK_VECTOR,
 				     cpu,
 				     dummy_handler,
@@ -90,7 +92,6 @@ void xen_init_lock_cpu(int cpu)
 	if (irq >= 0) {
 		disable_irq(irq); /* make sure it's never delivered */
 		per_cpu(lock_kicker_irq, cpu) = irq;
-		per_cpu(irq_name, cpu) = name;
 	}
 
 	printk("cpu %d spinlock event irq %d\n", cpu, irq);
@@ -103,6 +104,8 @@ void xen_uninit_lock_cpu(int cpu)
 	if (!xen_pvspin)
 		return;
 
+	kfree(per_cpu(irq_name, cpu));
+	per_cpu(irq_name, cpu) = NULL;
 	/*
 	 * When booting the kernel with 'mitigations=auto,nosmt', the secondary
 	 * CPUs are not activated, and lock_kicker_irq is not initialized.
@@ -113,10 +116,9 @@ void xen_uninit_lock_cpu(int cpu)
 
 	unbind_from_irqhandler(irq, NULL);
 	per_cpu(lock_kicker_irq, cpu) = -1;
-	kfree(per_cpu(irq_name, cpu));
-	per_cpu(irq_name, cpu) = NULL;
 }
 
+PV_CALLEE_SAVE_REGS_THUNK(xen_vcpu_stolen);
 
 /*
  * Our init of PV spinlocks is split in two init functions due to us
@@ -140,26 +142,8 @@ void __init xen_init_spinlocks(void)
 	pv_lock_ops.queued_spin_unlock = PV_CALLEE_SAVE(__pv_queued_spin_unlock);
 	pv_lock_ops.wait = xen_qlock_wait;
 	pv_lock_ops.kick = xen_qlock_kick;
+	pv_lock_ops.vcpu_is_preempted = PV_CALLEE_SAVE(xen_vcpu_stolen);
 }
-
-/*
- * While the jump_label init code needs to happend _after_ the jump labels are
- * enabled and before SMP is started. Hence we use pre-SMP initcall level
- * init. We cannot do it in xen_init_spinlocks as that is done before
- * jump labels are activated.
- */
-static __init int xen_init_spinlocks_jump(void)
-{
-	if (!xen_pvspin)
-		return 0;
-
-	if (!xen_domain())
-		return 0;
-
-	static_key_slow_inc(&paravirt_ticketlocks_enabled);
-	return 0;
-}
-early_initcall(xen_init_spinlocks_jump);
 
 static __init int xen_parse_nopvspin(char *arg)
 {

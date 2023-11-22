@@ -43,7 +43,7 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "mxser.h"
 
@@ -145,7 +145,7 @@ static const struct mxser_cardinfo mxser_cards[] = {
 
 /* driver_data correspond to the lines in the structure above
    see also ISA probe function before you change something */
-static struct pci_device_id mxser_pcibrds[] = {
+static const struct pci_device_id mxser_pcibrds[] = {
 	{ PCI_VDEVICE(MOXA, PCI_DEVICE_ID_MOXA_C168),	.driver_data = 3 },
 	{ PCI_VDEVICE(MOXA, PCI_DEVICE_ID_MOXA_C104),	.driver_data = 4 },
 	{ PCI_VDEVICE(MOXA, PCI_DEVICE_ID_MOXA_CP132),	.driver_data = 8 },
@@ -183,7 +183,7 @@ static int ttymajor = MXSERMAJOR;
 
 MODULE_AUTHOR("Casper Yang");
 MODULE_DESCRIPTION("MOXA Smartio/Industio Family Multiport Board Device Driver");
-module_param_array(ioaddr, ulong, NULL, 0);
+module_param_hw_array(ioaddr, ulong, ioport, NULL, 0);
 MODULE_PARM_DESC(ioaddr, "ISA io addresses to look for a moxa board");
 module_param(ttymajor, int, 0);
 MODULE_LICENSE("GPL");
@@ -246,11 +246,11 @@ struct mxser_port {
 	unsigned char err_shadow;
 
 	struct async_icount icount; /* kernel counters for 4 input interrupts */
-	int timeout;
+	unsigned int timeout;
 
 	int read_status_mask;
 	int ignore_status_mask;
-	int xmit_fifo_size;
+	unsigned int xmit_fifo_size;
 	int xmit_head;
 	int xmit_tail;
 	int xmit_cnt;
@@ -572,8 +572,9 @@ static void mxser_dtr_rts(struct tty_port *port, int on)
 static int mxser_set_baud(struct tty_struct *tty, long newspd)
 {
 	struct mxser_port *info = tty->driver_data;
-	int quot = 0, baud;
+	unsigned int quot = 0, baud;
 	unsigned char cval;
+	u64 timeout;
 
 	if (!info->ioaddr)
 		return -1;
@@ -594,8 +595,13 @@ static int mxser_set_baud(struct tty_struct *tty, long newspd)
 		quot = 0;
 	}
 
-	info->timeout = ((info->xmit_fifo_size * HZ * 10 * quot) / info->baud_base);
-	info->timeout += HZ / 50;	/* Add .02 seconds of slop */
+	/*
+	 * worst case (128 * 1000 * 10 * 18432) needs 35 bits, so divide in the
+	 * u64 domain
+	 */
+	timeout = (u64)info->xmit_fifo_size * HZ * 10 * quot;
+	do_div(timeout, info->baud_base);
+	info->timeout = timeout + HZ / 50; /* Add .02 seconds of slop */
 
 	if (quot) {
 		info->MCR |= UART_MCR_DTR;
@@ -860,6 +866,7 @@ static int mxser_activate(struct tty_port *port, struct tty_struct *tty)
 	struct mxser_port *info = container_of(port, struct mxser_port, port);
 	unsigned long page;
 	unsigned long flags;
+	int ret;
 
 	page = __get_free_page(GFP_KERNEL);
 	if (!page)
@@ -869,9 +876,9 @@ static int mxser_activate(struct tty_port *port, struct tty_struct *tty)
 
 	if (!info->ioaddr || !info->type) {
 		set_bit(TTY_IO_ERROR, &tty->flags);
-		free_page(page);
 		spin_unlock_irqrestore(&info->slock, flags);
-		return 0;
+		ret = 0;
+		goto err_free_xmit;
 	}
 	info->port.xmit_buf = (unsigned char *) page;
 
@@ -897,8 +904,10 @@ static int mxser_activate(struct tty_port *port, struct tty_struct *tty)
 		if (capable(CAP_SYS_ADMIN)) {
 			set_bit(TTY_IO_ERROR, &tty->flags);
 			return 0;
-		} else
-			return -ENODEV;
+		}
+
+		ret = -ENODEV;
+		goto err_free_xmit;
 	}
 
 	/*
@@ -943,6 +952,10 @@ static int mxser_activate(struct tty_port *port, struct tty_struct *tty)
 	spin_unlock_irqrestore(&info->slock, flags);
 
 	return 0;
+err_free_xmit:
+	free_page(page);
+	info->port.xmit_buf = NULL;
+	return ret;
 }
 
 /*

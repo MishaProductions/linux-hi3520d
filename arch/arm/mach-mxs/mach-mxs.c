@@ -393,8 +393,10 @@ static void __init mxs_machine_init(void)
 
 	root = of_find_node_by_path("/");
 	ret = of_property_read_string(root, "model", &soc_dev_attr->machine);
-	if (ret)
+	if (ret) {
+		kfree(soc_dev_attr);
 		return;
+	}
 
 	soc_dev_attr->family = "Freescale MXS Family";
 	soc_dev_attr->soc_id = mxs_get_soc_id();
@@ -419,7 +421,8 @@ static void __init mxs_machine_init(void)
 		crystalfontz_init();
 	else if (of_machine_is_compatible("eukrea,mbmx283lc"))
 		eukrea_mbmx283lc_init();
-	else if (of_machine_is_compatible("i2se,duckbill"))
+	else if (of_machine_is_compatible("i2se,duckbill") ||
+		 of_machine_is_compatible("i2se,duckbill-2"))
 		duckbill_init();
 	else if (of_machine_is_compatible("msr,m28cu3"))
 		m28cu3_init();

@@ -53,7 +53,7 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "icom.h"
 
@@ -1286,7 +1286,7 @@ static void icom_config_port(struct uart_port *port, int flags)
 	port->type = PORT_ICOM;
 }
 
-static struct uart_ops icom_ops = {
+static const struct uart_ops icom_ops = {
 	.tx_empty = icom_tx_empty,
 	.set_mctrl = icom_set_mctrl,
 	.get_mctrl = icom_get_mctrl,
@@ -1515,7 +1515,7 @@ static int icom_probe(struct pci_dev *dev,
 	retval = pci_read_config_dword(dev, PCI_COMMAND, &command_reg);
 	if (retval) {
 		dev_err(&dev->dev, "PCI Config read FAILED\n");
-		return retval;
+		goto probe_exit0;
 	}
 
 	pci_write_config_dword(dev, PCI_COMMAND,

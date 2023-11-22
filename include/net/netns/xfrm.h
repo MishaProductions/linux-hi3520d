@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __NETNS_XFRM_H
 #define __NETNS_XFRM_H
 
@@ -6,7 +7,6 @@
 #include <linux/workqueue.h>
 #include <linux/xfrm.h>
 #include <net/dst_ops.h>
-#include <net/flowcache.h>
 
 struct ctl_table_header;
 
@@ -48,6 +48,7 @@ struct netns_xfrm {
 	struct list_head	policy_all;
 	struct hlist_head	*policy_byidx;
 	unsigned int		policy_idx_hmask;
+	unsigned int		idx_generator;
 	struct hlist_head	policy_inexact[XFRM_POLICY_MAX];
 	struct xfrm_policy_hash	policy_bydst[XFRM_POLICY_MAX];
 	unsigned int		policy_count[XFRM_POLICY_MAX * 2];
@@ -73,16 +74,6 @@ struct netns_xfrm {
 	spinlock_t xfrm_state_lock;
 	spinlock_t xfrm_policy_lock;
 	struct mutex xfrm_cfg_mutex;
-
-	/* flow cache part */
-	struct flow_cache	flow_cache_global;
-	atomic_t		flow_cache_genid;
-	struct list_head	flow_cache_gc_list;
-	atomic_t		flow_cache_gc_count;
-	spinlock_t		flow_cache_gc_lock;
-	struct work_struct	flow_cache_gc_work;
-	struct work_struct	flow_cache_flush_work;
-	struct mutex		flow_flush_sem;
 };
 
 #endif

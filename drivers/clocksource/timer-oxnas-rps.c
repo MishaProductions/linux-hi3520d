@@ -247,7 +247,7 @@ static int __init oxnas_rps_timer_init(struct device_node *np)
 	}
 
 	rps->irq = irq_of_parse_and_map(np, 0);
-	if (rps->irq < 0) {
+	if (!rps->irq) {
 		ret = -EINVAL;
 		goto err_iomap;
 	}
@@ -293,7 +293,7 @@ err_alloc:
 	return ret;
 }
 
-CLOCKSOURCE_OF_DECLARE(ox810se_rps,
+TIMER_OF_DECLARE(ox810se_rps,
 		       "oxsemi,ox810se-rps-timer", oxnas_rps_timer_init);
-CLOCKSOURCE_OF_DECLARE(ox820_rps,
-		       "oxsemi,ox820se-rps-timer", oxnas_rps_timer_init);
+TIMER_OF_DECLARE(ox820_rps,
+		       "oxsemi,ox820-rps-timer", oxnas_rps_timer_init);

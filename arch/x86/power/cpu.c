@@ -26,6 +26,7 @@
 #include <asm/cpu.h>
 #include <asm/mmu_context.h>
 #include <asm/cpu_device_id.h>
+#include <asm/microcode.h>
 
 #ifdef CONFIG_X86_32
 __visible unsigned long saved_context_ebx;
@@ -41,7 +42,8 @@ static void msr_save_context(struct saved_context *ctxt)
 	struct saved_msr *end = msr + ctxt->saved_msrs.num;
 
 	while (msr < end) {
-		msr->valid = !rdmsrl_safe(msr->info.msr_no, &msr->info.reg.q);
+		if (msr->valid)
+			rdmsrl(msr->info.msr_no, msr->info.reg.q);
 		msr++;
 	}
 }
@@ -92,7 +94,7 @@ static void __save_processor_state(struct saved_context *ctxt)
 	 * 'pmode_gdt' in wakeup_start.
 	 */
 	ctxt->gdt_desc.size = GDT_SIZE - 1;
-	ctxt->gdt_desc.address = (unsigned long)get_cpu_gdt_table(smp_processor_id());
+	ctxt->gdt_desc.address = (unsigned long)get_cpu_gdt_rw(smp_processor_id());
 
 	store_tr(ctxt->tr);
 
@@ -122,7 +124,7 @@ static void __save_processor_state(struct saved_context *ctxt)
 	 */
 	ctxt->cr0 = read_cr0();
 	ctxt->cr2 = read_cr2();
-	ctxt->cr3 = read_cr3();
+	ctxt->cr3 = __read_cr3();
 	ctxt->cr4 = __read_cr4();
 #ifdef CONFIG_X86_64
 	ctxt->cr8 = read_cr8();
@@ -153,17 +155,19 @@ static void do_fpu_end(void)
 static void fix_processor_context(void)
 {
 	int cpu = smp_processor_id();
-	struct tss_struct *t = &per_cpu(cpu_tss, cpu);
 #ifdef CONFIG_X86_64
-	struct desc_struct *desc = get_cpu_gdt_table(cpu);
+	struct desc_struct *desc = get_cpu_gdt_rw(cpu);
 	tss_desc tss;
 #endif
-	set_tss_desc(cpu, t);	/*
-				 * This just modifies memory; should not be
-				 * necessary. But... This is necessary, because
-				 * 386 hardware has concept of busy TSS or some
-				 * similar stupidity.
-				 */
+
+	/*
+	 * We need to reload TR, which requires that we change the
+	 * GDT entry to indicate "available" first.
+	 *
+	 * XXX: This could probably all be replaced by a call to
+	 * force_reload_TR().
+	 */
+	set_tss_desc(cpu, &get_cpu_entry_area(cpu)->tss.x86_tss);
 
 #ifdef CONFIG_X86_64
 	memcpy(&tss, &desc[GDT_ENTRY_TSS], sizeof(tss_desc));
@@ -177,8 +181,12 @@ static void fix_processor_context(void)
 #endif
 	load_TR_desc();				/* This does ltr */
 	load_mm_ldt(current->active_mm);	/* This does lldt */
+	initialize_tlbstate_and_flush();
 
 	fpu__resume_cpu();
+
+	/* The processor is back on the direct GDT, load back the fixmap */
+	load_fixmap_gdt(cpu);
 }
 
 /**
@@ -257,9 +265,17 @@ static void notrace __restore_processor_state(struct saved_context *ctxt)
 #endif
 
 	do_fpu_end();
+	tsc_verify_tsc_adjust(true);
 	x86_platform.restore_sched_clock_state();
 	mtrr_bp_restore();
 	perf_restore_debug_store();
+
+	microcode_bsp_resume();
+
+	/*
+	 * This needs to happen after the microcode has been updated upon resume
+	 * because some of the MSRs are "emulated" in microcode.
+	 */
 	msr_restore_context(ctxt);
 }
 
@@ -419,8 +435,10 @@ static int msr_build_context(const u32 *msr_id, const int num)
 	}
 
 	for (i = saved_msrs->num, j = 0; i < total_num; i++, j++) {
+		u64 dummy;
+
 		msr_array[i].info.msr_no	= msr_id[j];
-		msr_array[i].valid		= false;
+		msr_array[i].valid		= !rdmsrl_safe(msr_id[j], &dummy);
 		msr_array[i].info.reg.q		= 0;
 	}
 	saved_msrs->num   = total_num;
@@ -448,7 +466,7 @@ static int msr_initialize_bdw(const struct dmi_system_id *d)
 	return msr_build_context(bdw_msr_id, ARRAY_SIZE(bdw_msr_id));
 }
 
-static struct dmi_system_id msr_save_dmi_table[] = {
+static const struct dmi_system_id msr_save_dmi_table[] = {
 	{
 	 .callback = msr_initialize_bdw,
 	 .ident = "BROADWELL BDX_EP",
@@ -507,10 +525,32 @@ static int pm_cpu_check(const struct x86_cpu_id *c)
 	return ret;
 }
 
+static void pm_save_spec_msr(void)
+{
+	struct msr_enumeration {
+		u32 msr_no;
+		u32 feature;
+	} msr_enum[] = {
+		{ MSR_IA32_SPEC_CTRL,	 X86_FEATURE_MSR_SPEC_CTRL },
+		{ MSR_IA32_TSX_CTRL,	 X86_FEATURE_MSR_TSX_CTRL },
+		{ MSR_TSX_FORCE_ABORT,	 X86_FEATURE_TSX_FORCE_ABORT },
+		{ MSR_IA32_MCU_OPT_CTRL, X86_FEATURE_SRBDS_CTRL },
+		{ MSR_AMD64_LS_CFG,	 X86_FEATURE_LS_CFG_SSBD },
+		{ MSR_AMD64_DE_CFG,	 X86_FEATURE_LFENCE_RDTSC },
+	};
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(msr_enum); i++) {
+		if (boot_cpu_has(msr_enum[i].feature))
+			msr_build_context(&msr_enum[i].msr_no, 1);
+	}
+}
+
 static int pm_check_save_msr(void)
 {
 	dmi_check_system(msr_save_dmi_table);
 	pm_cpu_check(msr_save_cpu_table);
+	pm_save_spec_msr();
 
 	return 0;
 }

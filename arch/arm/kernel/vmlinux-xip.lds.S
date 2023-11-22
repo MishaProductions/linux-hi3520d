@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /* ld script to make ARM Linux kernel
  * taken from the i386 version by Russell King
  * Written by Martin Mares <mj@atrey.karlin.mff.cuni.cz>
@@ -11,6 +12,19 @@
 #include <asm/thread_info.h>
 #include <asm/memory.h>
 #include <asm/page.h>
+
+/*
+ * ld.lld does not support NOCROSSREFS:
+ * https://github.com/ClangBuiltLinux/linux/issues/1609
+ */
+#ifdef CONFIG_LD_IS_LLD
+#define NOCROSSREFS
+#endif
+
+/* Set start/end symbol names to the LMA for the section */
+#define ARM_LMA(sym, section)						\
+	sym##_start = LOADADDR(section);				\
+	sym##_end = LOADADDR(section) + SIZEOF(section)
 
 #define PROC_INFO							\
 	. = ALIGN(4);							\
@@ -148,19 +162,31 @@ SECTIONS
 	 * The vectors and stubs are relocatable code, and the
 	 * only thing that matters is their relative offsets
 	 */
-	__vectors_start = .;
-	.vectors 0xffff0000 : AT(__vectors_start) {
-		*(.vectors)
+	__vectors_lma = .;
+	OVERLAY 0xffff0000 : NOCROSSREFS AT(__vectors_lma) {
+		.vectors {
+			*(.vectors)
+		}
+		.vectors.bhb.loop8 {
+			*(.vectors.bhb.loop8)
+		}
+		.vectors.bhb.bpiall {
+			*(.vectors.bhb.bpiall)
+		}
 	}
-	. = __vectors_start + SIZEOF(.vectors);
-	__vectors_end = .;
+	ARM_LMA(__vectors, .vectors);
+	ARM_LMA(__vectors_bhb_loop8, .vectors.bhb.loop8);
+	ARM_LMA(__vectors_bhb_bpiall, .vectors.bhb.bpiall);
+	. = __vectors_lma + SIZEOF(.vectors) +
+		SIZEOF(.vectors.bhb.loop8) +
+		SIZEOF(.vectors.bhb.bpiall);
 
-	__stubs_start = .;
-	.stubs ADDR(.vectors) + 0x1000 : AT(__stubs_start) {
+	__stubs_lma = .;
+	.stubs ADDR(.vectors) + 0x1000 : AT(__stubs_lma) {
 		*(.stubs)
 	}
-	. = __stubs_start + SIZEOF(.stubs);
-	__stubs_end = .;
+	ARM_LMA(__stubs, .stubs);
+	. = __stubs_lma + SIZEOF(.stubs);
 
 	PROVIDE(vector_fiq_offset = vector_fiq - ADDR(.vectors));
 
@@ -241,6 +267,8 @@ SECTIONS
 		_edata = .;
 	}
 	_edata_loc = __data_loc + SIZEOF(.data);
+
+	BUG_TABLE
 
 #ifdef CONFIG_HAVE_TCM
         /*

@@ -31,6 +31,7 @@
 
 #undef pr_fmt
 #define pr_fmt(fmt) "BERT: " fmt
+#define ACPI_BERT_PRINT_MAX_LEN 1024
 
 static int bert_disable;
 
@@ -59,8 +60,11 @@ static void __init bert_print_all(struct acpi_bert_region *region,
 		}
 
 		pr_info_once("Error records from previous boot:\n");
-
-		cper_estatus_print(KERN_INFO HW_ERR, estatus);
+		if (region_len < ACPI_BERT_PRINT_MAX_LEN)
+			cper_estatus_print(KERN_INFO HW_ERR, estatus);
+		else
+			pr_info_once("Max print length exceeded, table data is available at:\n"
+				     "/sys/firmware/acpi/tables/data/BERT");
 
 		/*
 		 * Because the boot error source is "one-time polled" type,
@@ -82,7 +86,7 @@ static int __init setup_bert_disable(char *str)
 {
 	bert_disable = 1;
 
-	return 0;
+	return 1;
 }
 __setup("bert_disable", setup_bert_disable);
 
@@ -97,6 +101,7 @@ static int __init bert_check_table(struct acpi_table_bert *bert_tab)
 
 static int __init bert_init(void)
 {
+	struct apei_resources bert_resources;
 	struct acpi_bert_region *boot_error_region;
 	struct acpi_table_bert *bert_tab;
 	unsigned int region_len;
@@ -127,13 +132,14 @@ static int __init bert_init(void)
 	}
 
 	region_len = bert_tab->region_length;
-	if (!request_mem_region(bert_tab->address, region_len, "APEI BERT")) {
-		pr_err("Can't request iomem region <%016llx-%016llx>.\n",
-		       (unsigned long long)bert_tab->address,
-		       (unsigned long long)bert_tab->address + region_len - 1);
-		return -EIO;
-	}
-
+	apei_resources_init(&bert_resources);
+	rc = apei_resources_add(&bert_resources, bert_tab->address,
+				region_len, true);
+	if (rc)
+		return rc;
+	rc = apei_resources_request(&bert_resources, "APEI BERT");
+	if (rc)
+		goto out_fini;
 	boot_error_region = ioremap_cache(bert_tab->address, region_len);
 	if (boot_error_region) {
 		bert_print_all(boot_error_region, region_len);
@@ -142,7 +148,9 @@ static int __init bert_init(void)
 		rc = -ENOMEM;
 	}
 
-	release_mem_region(bert_tab->address, region_len);
+	apei_resources_release(&bert_resources);
+out_fini:
+	apei_resources_fini(&bert_resources);
 
 	return rc;
 }

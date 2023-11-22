@@ -333,8 +333,8 @@ struct PVSCSIRingReqDesc {
 	u8	tag;
 	u8	bus;
 	u8	target;
-	u8	vcpuHint;
-	u8	unused[59];
+	u16	vcpuHint;
+	u8	unused[58];
 } __packed;
 
 /*
@@ -421,11 +421,6 @@ struct PVSCSIConfigPageController {
  * Number of MSI-X vectors supported.
  */
 #define PVSCSI_MAX_INTRS        24
-
-/*
- * Enumeration of supported MSI-X vectors
- */
-#define PVSCSI_VECTOR_COMPLETION   0
 
 /*
  * Misc constants for the rings.

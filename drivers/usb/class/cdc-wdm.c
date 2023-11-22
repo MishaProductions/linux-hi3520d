@@ -26,10 +26,6 @@
 #include <asm/unaligned.h>
 #include <linux/usb/cdc-wdm.h>
 
-/*
- * Version Information
- */
-#define DRIVER_VERSION "v0.03"
 #define DRIVER_AUTHOR "Oliver Neukum"
 #define DRIVER_DESC "USB Abstract Control Model driver for USB WCM Device Management"
 
@@ -366,17 +362,9 @@ static ssize_t wdm_write
 	if (we < 0)
 		return usb_translate_errors(we);
 
-	buf = kmalloc(count, GFP_KERNEL);
-	if (!buf) {
-		rv = -ENOMEM;
-		goto outnl;
-	}
-
-	r = copy_from_user(buf, buffer, count);
-	if (r > 0) {
-		rv = -EFAULT;
-		goto out_free_mem;
-	}
+	buf = memdup_user(buffer, count);
+	if (IS_ERR(buf))
+		return PTR_ERR(buf);
 
 	/* concurrent writes and disconnect */
 	r = mutex_lock_interruptible(&desc->wlock);
@@ -450,8 +438,7 @@ static ssize_t wdm_write
 
 	usb_autopm_put_interface(desc->intf);
 	mutex_unlock(&desc->wlock);
-outnl:
-	return rv < 0 ? rv : count;
+	return count;
 
 out_free_mem_pm:
 	usb_autopm_put_interface(desc->intf);
@@ -519,7 +506,7 @@ retry:
 		i++;
 		if (file->f_flags & O_NONBLOCK) {
 			if (!test_bit(WDM_READ, &desc->flags)) {
-				rv = cntr ? cntr : -EAGAIN;
+				rv = -EAGAIN;
 				goto err;
 			}
 			rv = 0;
@@ -744,6 +731,7 @@ static int wdm_release(struct inode *inode, struct file *file)
 			kill_urbs(desc);
 			spin_lock_irq(&desc->iuspin);
 			desc->resp_count = 0;
+			clear_bit(WDM_RESPONDING, &desc->flags);
 			spin_unlock_irq(&desc->iuspin);
 			desc->manage_power(desc->intf, 0);
 		} else {

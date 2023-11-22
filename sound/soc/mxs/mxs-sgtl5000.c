@@ -68,7 +68,7 @@ static int mxs_sgtl5000_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static struct snd_soc_ops mxs_sgtl5000_hifi_ops = {
+static const struct snd_soc_ops mxs_sgtl5000_hifi_ops = {
 	.hw_params = mxs_sgtl5000_hw_params,
 };
 
@@ -112,6 +112,9 @@ static int mxs_sgtl5000_probe(struct platform_device *pdev)
 	codec_np = of_parse_phandle(np, "audio-codec", 0);
 	if (!saif_np[0] || !saif_np[1] || !codec_np) {
 		dev_err(&pdev->dev, "phandle missing or invalid\n");
+		of_node_put(codec_np);
+		of_node_put(saif_np[0]);
+		of_node_put(saif_np[1]);
 		return -EINVAL;
 	}
 
@@ -140,7 +143,6 @@ static int mxs_sgtl5000_probe(struct platform_device *pdev)
 	}
 
 	card->dev = &pdev->dev;
-	platform_set_drvdata(pdev, card);
 
 	ret = devm_snd_soc_register_card(&pdev->dev, card);
 	if (ret) {

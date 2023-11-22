@@ -282,7 +282,7 @@ struct l2cap_conn_rsp {
 #define L2CAP_CR_BAD_KEY_SIZE	0x0007
 #define L2CAP_CR_ENCRYPTION	0x0008
 #define L2CAP_CR_INVALID_SCID	0x0009
-#define L2CAP_CR_SCID_IN_USE	0x0010
+#define L2CAP_CR_SCID_IN_USE	0x000A
 
 /* connect/create channel status */
 #define L2CAP_CS_NO_INFO	0x0000
@@ -798,6 +798,7 @@ enum {
 };
 
 void l2cap_chan_hold(struct l2cap_chan *c);
+struct l2cap_chan *l2cap_chan_hold_unless_zero(struct l2cap_chan *c);
 void l2cap_chan_put(struct l2cap_chan *c);
 
 static inline void l2cap_chan_lock(struct l2cap_chan *chan)

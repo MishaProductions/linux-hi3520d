@@ -30,7 +30,7 @@
 #include <linux/if.h>
 #include <linux/hdlc.h>
 #include <asm/io.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include "farsync.h"
 
@@ -857,7 +857,7 @@ fst_rx_dma_complete(struct fst_card_info *card, struct fst_port_info *port,
 
 	dbg(DBG_TX, "fst_rx_dma_complete\n");
 	pi = port->index;
-	memcpy(skb_put(skb, len), card->rx_dma_handle_host, len);
+	skb_put_data(skb, card->rx_dma_handle_host, len);
 
 	/* Reset buffer descriptor */
 	FST_WRB(card, rxDescrRing[pi][rxp].bits, DMA_OWN);
@@ -2394,7 +2394,6 @@ fst_init_card(struct fst_card_info *card)
 static const struct net_device_ops fst_ops = {
 	.ndo_open       = fst_open,
 	.ndo_stop       = fst_close,
-	.ndo_change_mtu = hdlc_change_mtu,
 	.ndo_start_xmit = hdlc_start_xmit,
 	.ndo_do_ioctl   = fst_ioctl,
 	.ndo_tx_timeout = fst_tx_timeout,
@@ -2620,6 +2619,7 @@ fst_remove_one(struct pci_dev *pdev)
 	for (i = 0; i < card->nports; i++) {
 		struct net_device *dev = port_to_dev(&card->ports[i]);
 		unregister_hdlc_device(dev);
+		free_netdev(dev);
 	}
 
 	fst_disable_intr(card);
@@ -2640,6 +2640,7 @@ fst_remove_one(struct pci_dev *pdev)
 				    card->tx_dma_handle_card);
 	}
 	fst_card_array[card->card_no] = NULL;
+	kfree(card);
 }
 
 static struct pci_driver fst_driver = {

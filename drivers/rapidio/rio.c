@@ -192,8 +192,6 @@ int rio_add_device(struct rio_dev *rdev)
 	}
 	spin_unlock(&rio_global_list_lock);
 
-	rio_create_sysfs_dev_files(rdev);
-
 	return 0;
 }
 EXPORT_SYMBOL_GPL(rio_add_device);
@@ -220,7 +218,6 @@ void rio_del_device(struct rio_dev *rdev, enum rio_device_state state)
 		}
 	}
 	spin_unlock(&rio_global_list_lock);
-	rio_remove_sysfs_dev_files(rdev);
 	device_unregister(&rdev->dev);
 }
 EXPORT_SYMBOL_GPL(rio_del_device);
@@ -2275,11 +2272,16 @@ int rio_register_mport(struct rio_mport *port)
 	atomic_set(&port->state, RIO_DEVICE_RUNNING);
 
 	res = device_register(&port->dev);
-	if (res)
+	if (res) {
 		dev_err(&port->dev, "RIO: mport%d registration failed ERR=%d\n",
 			port->id, res);
-	else
+		mutex_lock(&rio_mport_list_lock);
+		list_del(&port->node);
+		mutex_unlock(&rio_mport_list_lock);
+		put_device(&port->dev);
+	} else {
 		dev_dbg(&port->dev, "RIO: registered mport%d\n", port->id);
+	}
 
 	return res;
 }

@@ -582,12 +582,7 @@ static int hcd_pci_suspend_noirq(struct device *dev)
 
 static int hcd_pci_resume_noirq(struct device *dev)
 {
-	struct pci_dev		*pci_dev = to_pci_dev(dev);
-
-	powermac_set_asic(pci_dev, 1);
-
-	/* Go back to D0 and disable remote wakeup */
-	pci_back_from_sleep(pci_dev);
+	powermac_set_asic(to_pci_dev(dev), 1);
 	return 0;
 }
 
@@ -637,10 +632,10 @@ const struct dev_pm_ops usb_hcd_pci_pm_ops = {
 	.suspend_noirq	= hcd_pci_suspend_noirq,
 	.resume_noirq	= hcd_pci_resume_noirq,
 	.resume		= hcd_pci_resume,
-	.freeze		= check_root_hub_suspended,
+	.freeze		= hcd_pci_suspend,
 	.freeze_noirq	= check_root_hub_suspended,
 	.thaw_noirq	= NULL,
-	.thaw		= NULL,
+	.thaw		= hcd_pci_resume,
 	.poweroff	= hcd_pci_suspend,
 	.poweroff_noirq	= hcd_pci_suspend_noirq,
 	.restore_noirq	= hcd_pci_resume_noirq,

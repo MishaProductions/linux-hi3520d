@@ -40,7 +40,6 @@ show up in /proc/sys/kernel:
 - hung_task_warnings
 - kexec_load_disabled
 - kptr_restrict
-- kstack_depth_to_print       [ X86 only ]
 - l2cr                        [ PPC only ]
 - modprobe                    ==> Documentation/debugging-modules.txt
 - modules_disabled
@@ -49,6 +48,7 @@ show up in /proc/sys/kernel:
 - msgmnb
 - msgmni
 - nmi_watchdog
+- oops_limit
 - osrelease
 - ostype
 - overflowgid
@@ -62,6 +62,7 @@ show up in /proc/sys/kernel:
 - perf_cpu_time_max_percent
 - perf_event_paranoid
 - perf_event_max_stack
+- perf_event_mlock_kb
 - perf_event_max_contexts_per_stack
 - pid_max
 - powersave-nap               [ PPC only ]
@@ -71,10 +72,11 @@ show up in /proc/sys/kernel:
 - printk_ratelimit_burst
 - pty                         ==> Documentation/filesystems/devpts.txt
 - randomize_va_space
-- real-root-dev               ==> Documentation/initrd.txt
+- real-root-dev               ==> Documentation/admin-guide/initrd.rst
 - reboot-cmd                  [ SPARC only ]
 - rtsig-max
 - rtsig-nr
+- seccomp/                    ==> Documentation/userspace-api/seccomp_filter.rst
 - sem
 - sem_next_id		      [ sysv ipc ]
 - sg-big-buff                 [ generic SCSI device (sg) ]
@@ -86,11 +88,13 @@ show up in /proc/sys/kernel:
 - softlockup_all_cpu_backtrace
 - soft_watchdog
 - stop-a                      [ SPARC only ]
-- sysrq                       ==> Documentation/sysrq.txt
+- sysrq                       ==> Documentation/admin-guide/sysrq.rst
 - sysctl_writes_strict
 - tainted
 - threads-max
+- unprivileged_bpf_disabled
 - unknown_nmi_panic
+- warn_limit
 - watchdog
 - watchdog_thresh
 - version
@@ -395,13 +399,6 @@ When kptr_restrict is set to (2), kernel pointers printed using
 
 ==============================================================
 
-kstack_depth_to_print: (X86 only)
-
-Controls the number of words to print when dumping the raw
-kernel stack.
-
-==============================================================
-
 l2cr: (PPC only)
 
 This flag controls the L2 cache of G3 processor boards. If
@@ -453,7 +450,7 @@ in a KVM virtual machine. This default can be overridden by adding
 
    nmi_watchdog=1
 
-to the guest kernel command line (see Documentation/kernel-parameters.txt).
+to the guest kernel command line (see Documentation/admin-guide/kernel-parameters.rst).
 
 ==============================================================
 
@@ -517,6 +514,15 @@ rate for each task.
 
 numa_balancing_scan_size_mb is how many megabytes worth of pages are
 scanned for a given scan.
+
+==============================================================
+
+oops_limit:
+
+Number of kernel oopses after which the kernel should panic when
+``panic_on_oops`` is not set. Setting this to 0 disables checking
+the count. Setting this to  1 has the same effect as setting
+``panic_on_oops=1``. The default value is 10000.
 
 ==============================================================
 
@@ -662,7 +668,9 @@ Controls use of the performance events system by unprivileged
 users (without CAP_SYS_ADMIN).  The default value is 2.
 
  -1: Allow use of (almost) all events by all users
->=0: Disallow raw tracepoint access by users without CAP_IOC_LOCK
+     Ignore mlock limit after perf_event_mlock_kb without CAP_IPC_LOCK
+>=0: Disallow ftrace function tracepoint by users without CAP_SYS_ADMIN
+     Disallow raw tracepoint access by users without CAP_SYS_ADMIN
 >=1: Disallow CPU event access by users without CAP_SYS_ADMIN
 >=2: Disallow kernel profiling by users without CAP_SYS_ADMIN
 
@@ -678,6 +686,14 @@ This can only be done when no events are in use that have callchains
 enabled, otherwise writing to this file will return -EBUSY.
 
 The default value is 127.
+
+==============================================================
+
+perf_event_mlock_kb:
+
+Control size of per-cpu ring buffer not counted agains mlock limit.
+
+The default value is 512 + 1 page
 
 ==============================================================
 
@@ -776,9 +792,40 @@ The kernel command line parameter printk.devkmsg= overrides this and is
 a one-time setting until next reboot: once set, it cannot be changed by
 this sysctl interface anymore.
 
-==============================================================
+pty
+===
 
-randomize_va_space:
+See Documentation/filesystems/devpts.rst.
+
+
+random
+======
+
+This is a directory, with the following entries:
+
+* ``boot_id``: a UUID generated the first time this is retrieved, and
+  unvarying after that;
+
+* ``uuid``: a UUID generated every time this is retrieved (this can
+  thus be used to generate UUIDs at will);
+
+* ``entropy_avail``: the pool's entropy count, in bits;
+
+* ``poolsize``: the entropy pool size, in bits;
+
+* ``urandom_min_reseed_secs``: obsolete (used to determine the minimum
+  number of seconds between urandom pool reseeding). This file is
+  writable for compatibility purposes, but writing to it has no effect
+  on any RNG behavior;
+
+* ``write_wakeup_threshold``: when the entropy count drops below this
+  (as a number of bits), processes waiting to write to ``/dev/random``
+  are woken up. This file is writable for compatibility purposes, but
+  writing to it has no effect on any RNG behavior.
+
+
+randomize_va_space
+==================
 
 This option can be used to select the type of process address
 space randomization that is used in the system, for architectures
@@ -995,6 +1042,26 @@ available RAM pages threads-max is reduced accordingly.
 
 ==============================================================
 
+unprivileged_bpf_disabled:
+
+Writing 1 to this entry will disable unprivileged calls to bpf();
+once disabled, calling bpf() without CAP_SYS_ADMIN will return
+-EPERM. Once set to 1, this can't be cleared from the running kernel
+anymore.
+
+Writing 2 to this entry will also disable unprivileged calls to bpf(),
+however, an admin can still change this setting later on, if needed, by
+writing 0 or 1 to this entry.
+
+If BPF_UNPRIV_DEFAULT_OFF is enabled in the kernel config, then this
+entry will default to 2 instead of 0.
+
+  0 - Unprivileged calls to bpf() are enabled
+  1 - Unprivileged calls to bpf() are disabled without recovery
+  2 - Unprivileged calls to bpf() are disabled
+
+==============================================================
+
 unknown_nmi_panic:
 
 The value in this file affects behavior of handling NMI. When the
@@ -1003,6 +1070,15 @@ that time, kernel debugging information is displayed on console.
 
 NMI switch that most IA32 servers have fires unknown NMI up, for
 example.  If a system hangs up, try pressing the NMI switch.
+
+==============================================================
+
+warn_limit:
+
+Number of kernel warnings after which the kernel should panic when
+``panic_on_warn`` is not set. Setting this to 0 disables checking
+the warning count. Setting this to 1 has the same effect as setting
+``panic_on_warn=1``. The default value is 0.
 
 ==============================================================
 

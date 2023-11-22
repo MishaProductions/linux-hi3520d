@@ -14,10 +14,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
- *
  */
 
 #ifndef _DVBDEV_H_
@@ -34,7 +30,7 @@
 #if defined(CONFIG_DVB_MAX_ADAPTERS) && CONFIG_DVB_MAX_ADAPTERS > 0
   #define DVB_MAX_ADAPTERS CONFIG_DVB_MAX_ADAPTERS
 #else
-  #define DVB_MAX_ADAPTERS 8
+  #define DVB_MAX_ADAPTERS 16
 #endif
 
 #define DVB_UNSET (-1)
@@ -137,6 +133,7 @@ struct dvb_adapter {
  */
 struct dvb_device {
 	struct list_head list_head;
+	struct kref ref;
 	const struct file_operations *fops;
 	struct dvb_adapter *adapter;
 	int type;
@@ -167,6 +164,20 @@ struct dvb_device {
 
 	void *priv;
 };
+
+/**
+ * dvb_device_get - Increase dvb_device reference
+ *
+ * @dvbdev:	pointer to struct dvb_device
+ */
+struct dvb_device *dvb_device_get(struct dvb_device *dvbdev);
+
+/**
+ * dvb_device_get - Decrease dvb_device reference
+ *
+ * @dvbdev:	pointer to struct dvb_device
+ */
+void dvb_device_put(struct dvb_device *dvbdev);
 
 /**
  * dvb_register_adapter - Registers a new DVB adapter
@@ -210,6 +221,17 @@ int dvb_register_device(struct dvb_adapter *adap,
 			void *priv,
 			int type,
 			int demux_sink_pads);
+
+/**
+ * dvb_remove_device - Remove a registered DVB device
+ *
+ * This does not free memory. dvb_free_device() will do that when
+ * reference counter is empty
+ *
+ * @dvbdev:	pointer to struct dvb_device
+ */
+void dvb_remove_device(struct dvb_device *dvbdev);
+
 
 /**
  * dvb_unregister_device - Unregisters a DVB device

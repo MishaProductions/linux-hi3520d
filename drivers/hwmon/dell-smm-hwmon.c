@@ -294,7 +294,7 @@ static int i8k_get_fan_nominal_speed(int fan, int speed)
 }
 
 /*
- * Set the fan speed (off, low, high). Returns the new fan status.
+ * Set the fan speed (off, low, high, ...).
  */
 static int i8k_set_fan(int fan, int speed)
 {
@@ -303,7 +303,7 @@ static int i8k_set_fan(int fan, int speed)
 	speed = (speed < 0) ? 0 : ((speed > i8k_fan_max) ? i8k_fan_max : speed);
 	regs.ebx = (fan & 0xff) | (speed << 8);
 
-	return i8k_smm(&regs) ? : i8k_get_fan_status(fan);
+	return i8k_smm(&regs);
 }
 
 static int i8k_get_temp_type(int sensor)
@@ -417,7 +417,7 @@ static int
 i8k_ioctl_unlocked(struct file *fp, unsigned int cmd, unsigned long arg)
 {
 	int val = 0;
-	int speed;
+	int speed, err;
 	unsigned char buff[16];
 	int __user *argp = (int __user *)arg;
 
@@ -478,7 +478,11 @@ i8k_ioctl_unlocked(struct file *fp, unsigned int cmd, unsigned long arg)
 		if (copy_from_user(&speed, argp + 1, sizeof(int)))
 			return -EFAULT;
 
-		val = i8k_set_fan(val, speed);
+		err = i8k_set_fan(val, speed);
+		if (err < 0)
+			return err;
+
+		val = i8k_get_fan_status(val);
 		break;
 
 	default:
@@ -893,7 +897,7 @@ static const struct i8k_config_data i8k_config_data[] = {
 	},
 };
 
-static struct dmi_system_id i8k_dmi_table[] __initdata = {
+static const struct dmi_system_id i8k_dmi_table[] __initconst = {
 	{
 		.ident = "Dell Inspiron",
 		.matches = {
@@ -998,6 +1002,13 @@ static struct dmi_system_id i8k_dmi_table[] __initdata = {
 		},
 		.driver_data = (void *)&i8k_config_data[DELL_XPS],
 	},
+	{
+		.ident = "Dell XPS 15 9560",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "XPS 15 9560"),
+		},
+	},
 	{ }
 };
 
@@ -1009,7 +1020,7 @@ MODULE_DEVICE_TABLE(dmi, i8k_dmi_table);
  * of affected Dell machines for which we disallow I8K_SMM_GET_FAN_TYPE call.
  * See bug: https://bugzilla.kernel.org/show_bug.cgi?id=100121
  */
-static struct dmi_system_id i8k_blacklist_fan_type_dmi_table[] __initdata = {
+static const struct dmi_system_id i8k_blacklist_fan_type_dmi_table[] __initconst = {
 	{
 		.ident = "Dell Studio XPS 8000",
 		.matches = {

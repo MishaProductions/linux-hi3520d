@@ -1396,7 +1396,6 @@ static int nodeid_warned(int nodeid, int num_nodes, int *warned)
 void dlm_scan_waiters(struct dlm_ls *ls)
 {
 	struct dlm_lkb *lkb;
-	ktime_t zero = ktime_set(0, 0);
 	s64 us;
 	s64 debug_maxus = 0;
 	u32 debug_scanned = 0;
@@ -1410,7 +1409,7 @@ void dlm_scan_waiters(struct dlm_ls *ls)
 	mutex_lock(&ls->ls_waiters_mutex);
 
 	list_for_each_entry(lkb, &ls->ls_waiters, lkb_wait_reply) {
-		if (ktime_equal(lkb->lkb_wait_time, zero))
+		if (!lkb->lkb_wait_time)
 			continue;
 
 		debug_scanned++;
@@ -1420,7 +1419,7 @@ void dlm_scan_waiters(struct dlm_ls *ls)
 		if (us < dlm_config.ci_waitwarn_us)
 			continue;
 
-		lkb->lkb_wait_time = zero;
+		lkb->lkb_wait_time = 0;
 
 		debug_expired++;
 		if (us > debug_maxus)
@@ -1428,7 +1427,7 @@ void dlm_scan_waiters(struct dlm_ls *ls)
 
 		if (!num_nodes) {
 			num_nodes = ls->ls_num_nodes;
-			warned = kzalloc(num_nodes * sizeof(int), GFP_KERNEL);
+			warned = kcalloc(num_nodes, sizeof(int), GFP_KERNEL);
 		}
 		if (!warned)
 			continue;
@@ -1555,6 +1554,7 @@ static int _remove_from_waiters(struct dlm_lkb *lkb, int mstype,
 		lkb->lkb_wait_type = 0;
 		lkb->lkb_flags &= ~DLM_IFL_OVERLAP_CANCEL;
 		lkb->lkb_wait_count--;
+		unhold_lkb(lkb);
 		goto out_del;
 	}
 
@@ -1581,6 +1581,7 @@ static int _remove_from_waiters(struct dlm_lkb *lkb, int mstype,
 		log_error(ls, "remwait error %x reply %d wait_type %d overlap",
 			  lkb->lkb_id, mstype, lkb->lkb_wait_type);
 		lkb->lkb_wait_count--;
+		unhold_lkb(lkb);
 		lkb->lkb_wait_type = 0;
 	}
 
@@ -2886,17 +2887,9 @@ static int set_unlock_args(uint32_t flags, void *astarg, struct dlm_args *args)
 static int validate_lock_args(struct dlm_ls *ls, struct dlm_lkb *lkb,
 			      struct dlm_args *args)
 {
-	int rv = -EINVAL;
+	int rv = -EBUSY;
 
 	if (args->flags & DLM_LKF_CONVERT) {
-		if (lkb->lkb_flags & DLM_IFL_MSTCPY)
-			goto out;
-
-		if (args->flags & DLM_LKF_QUECVT &&
-		    !__quecvt_compat_matrix[lkb->lkb_grmode+1][args->mode+1])
-			goto out;
-
-		rv = -EBUSY;
 		if (lkb->lkb_status != DLM_LKSTS_GRANTED)
 			goto out;
 
@@ -2904,6 +2897,14 @@ static int validate_lock_args(struct dlm_ls *ls, struct dlm_lkb *lkb,
 			goto out;
 
 		if (is_overlap(lkb))
+			goto out;
+
+		rv = -EINVAL;
+		if (lkb->lkb_flags & DLM_IFL_MSTCPY)
+			goto out;
+
+		if (args->flags & DLM_LKF_QUECVT &&
+		    !__quecvt_compat_matrix[lkb->lkb_grmode+1][args->mode+1])
 			goto out;
 	}
 
@@ -5132,11 +5133,9 @@ void dlm_recover_waiters_pre(struct dlm_ls *ls)
 	int wait_type, stub_unlock_result, stub_cancel_result;
 	int dir_nodeid;
 
-	ms_stub = kmalloc(sizeof(struct dlm_message), GFP_KERNEL);
-	if (!ms_stub) {
-		log_error(ls, "dlm_recover_waiters_pre no mem");
+	ms_stub = kmalloc(sizeof(*ms_stub), GFP_KERNEL);
+	if (!ms_stub)
 		return;
-	}
 
 	mutex_lock(&ls->ls_waiters_mutex);
 
@@ -5314,11 +5313,16 @@ int dlm_recover_waiters_post(struct dlm_ls *ls)
 		lkb->lkb_flags &= ~DLM_IFL_OVERLAP_UNLOCK;
 		lkb->lkb_flags &= ~DLM_IFL_OVERLAP_CANCEL;
 		lkb->lkb_wait_type = 0;
-		lkb->lkb_wait_count = 0;
+		/* drop all wait_count references we still
+		 * hold a reference for this iteration.
+		 */
+		while (lkb->lkb_wait_count) {
+			lkb->lkb_wait_count--;
+			unhold_lkb(lkb);
+		}
 		mutex_lock(&ls->ls_waiters_mutex);
 		list_del_init(&lkb->lkb_wait_reply);
 		mutex_unlock(&ls->ls_waiters_mutex);
-		unhold_lkb(lkb); /* for waiters list */
 
 		if (oc || ou) {
 			/* do an unlock or cancel instead of resending */

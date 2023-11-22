@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2016, Intel Corp.
+ * Copyright (C) 2000 - 2017, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -212,6 +212,7 @@ acpi_status
 acpi_ds_method_error(acpi_status status, struct acpi_walk_state *walk_state)
 {
 	u32 aml_offset;
+	acpi_name name = 0;
 
 	ACPI_FUNCTION_ENTRY();
 
@@ -237,10 +238,13 @@ acpi_ds_method_error(acpi_status status, struct acpi_walk_state *walk_state)
 						walk_state->parser_state.
 						aml_start);
 
-		status = acpi_gbl_exception_handler(status,
-						    walk_state->method_node ?
-						    walk_state->method_node->
-						    name.integer : 0,
+		if (walk_state->method_node) {
+			name = walk_state->method_node->name.integer;
+		} else if (walk_state->deferred_node) {
+			name = walk_state->deferred_node->name.integer;
+		}
+
+		status = acpi_gbl_exception_handler(status, name,
 						    walk_state->opcode,
 						    aml_offset, NULL);
 		acpi_ex_enter_interpreter();
@@ -547,7 +551,7 @@ acpi_ds_call_control_method(struct acpi_thread_state *thread,
 	info = ACPI_ALLOCATE_ZEROED(sizeof(struct acpi_evaluate_info));
 	if (!info) {
 		status = AE_NO_MEMORY;
-		goto cleanup;
+		goto pop_walk_state;
 	}
 
 	info->parameters = &this_walk_state->operands[0];
@@ -559,7 +563,7 @@ acpi_ds_call_control_method(struct acpi_thread_state *thread,
 
 	ACPI_FREE(info);
 	if (ACPI_FAILURE(status)) {
-		goto cleanup;
+		goto pop_walk_state;
 	}
 
 	/*
@@ -590,6 +594,12 @@ acpi_ds_call_control_method(struct acpi_thread_state *thread,
 	}
 
 	return_ACPI_STATUS(status);
+
+pop_walk_state:
+
+	/* On error, pop the walk state to be deleted from thread */
+
+	acpi_ds_pop_walk_state(thread);
 
 cleanup:
 

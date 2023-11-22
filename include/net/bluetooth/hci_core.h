@@ -26,11 +26,16 @@
 #define __HCI_CORE_H
 
 #include <linux/leds.h>
+#include <linux/rculist.h>
+
 #include <net/bluetooth/hci.h>
 #include <net/bluetooth/hci_sock.h>
 
 /* HCI priority */
 #define HCI_PRIO_MAX	7
+
+/* HCI maximum id value */
+#define HCI_MAX_ID 10000
 
 /* HCI Core structures */
 struct inquiry_data {
@@ -200,7 +205,7 @@ struct hci_dev {
 	struct list_head list;
 	struct mutex	lock;
 
-	char		name[8];
+	const char	*name;
 	unsigned long	flags;
 	__u16		id;
 	__u8		bus;
@@ -991,7 +996,7 @@ static inline void hci_conn_drop(struct hci_conn *conn)
 static inline void hci_dev_put(struct hci_dev *d)
 {
 	BT_DBG("%s orig refcnt %d", d->name,
-	       atomic_read(&d->dev.kobj.kref.refcount));
+	       kref_read(&d->dev.kobj.kref));
 
 	put_device(&d->dev);
 }
@@ -999,7 +1004,7 @@ static inline void hci_dev_put(struct hci_dev *d)
 static inline struct hci_dev *hci_dev_hold(struct hci_dev *d)
 {
 	BT_DBG("%s orig refcnt %d", d->name,
-	       atomic_read(&d->dev.kobj.kref.refcount));
+	       kref_read(&d->dev.kobj.kref));
 
 	get_device(&d->dev);
 	return d;

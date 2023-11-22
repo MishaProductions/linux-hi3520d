@@ -785,6 +785,9 @@ static void rxstate(struct musb *musb, struct musb_request *req)
 			musb_writew(epio, MUSB_RXCSR, csr);
 
 buffer_aint_mapped:
+			fifo_count = min_t(unsigned int,
+					request->length - request->actual,
+					(unsigned int)fifo_count);
 			musb_read_fifo(musb_ep->hw_ep, fifo_count, (u8 *)
 					(request->buf + request->actual));
 			request->actual += fifo_count;
@@ -964,8 +967,8 @@ static int musb_gadget_enable(struct usb_ep *ep,
 		goto fail;
 
 	/* REVISIT this rules out high bandwidth periodic transfers */
-	tmp = usb_endpoint_maxp(desc);
-	if (tmp & ~0x07ff) {
+	tmp = usb_endpoint_maxp_mult(desc) - 1;
+	if (tmp) {
 		int ok;
 
 		if (usb_endpoint_dir_in(desc))
@@ -977,12 +980,12 @@ static int musb_gadget_enable(struct usb_ep *ep,
 			musb_dbg(musb, "no support for high bandwidth ISO");
 			goto fail;
 		}
-		musb_ep->hb_mult = (tmp >> 11) & 3;
+		musb_ep->hb_mult = tmp;
 	} else {
 		musb_ep->hb_mult = 0;
 	}
 
-	musb_ep->packet_sz = tmp & 0x7ff;
+	musb_ep->packet_sz = usb_endpoint_maxp(desc);
 	tmp = musb_ep->packet_sz * (musb_ep->hb_mult + 1);
 
 	/* enable the interrupts for the endpoint, set the endpoint
@@ -1095,11 +1098,7 @@ static int musb_gadget_enable(struct usb_ep *ep,
 
 	pr_debug("%s periph: enabled %s for %s %s, %smaxpacket %d\n",
 			musb_driver_name, musb_ep->end_point.name,
-			({ char *s; switch (musb_ep->type) {
-			case USB_ENDPOINT_XFER_BULK:	s = "bulk"; break;
-			case USB_ENDPOINT_XFER_INT:	s = "int"; break;
-			default:			s = "iso"; break;
-			} s; }),
+			musb_ep_xfertype_string(musb_ep->type),
 			musb_ep->is_in ? "IN" : "OUT",
 			musb_ep->dma ? "dma, " : "",
 			musb_ep->packet_sz);
@@ -1662,8 +1661,6 @@ static int musb_gadget_vbus_draw(struct usb_gadget *gadget, unsigned mA)
 {
 	struct musb	*musb = gadget_to_musb(gadget);
 
-	if (!musb->xceiv->set_power)
-		return -EOPNOTSUPP;
 	return usb_phy_set_power(musb->xceiv, mA);
 }
 

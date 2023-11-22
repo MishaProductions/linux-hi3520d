@@ -102,7 +102,7 @@ struct ipmi_user {
 	struct kref refcount;
 
 	/* The upper layer that handles receive messages. */
-	struct ipmi_user_hndl *handler;
+	const struct ipmi_user_hndl *handler;
 	void             *handler_data;
 
 	/* The interface this user is bound to. */
@@ -158,15 +158,16 @@ struct seq_table {
  * Store the information in a msgid (long) to allow us to find a
  * sequence table entry from the msgid.
  */
-#define STORE_SEQ_IN_MSGID(seq, seqid) (((seq&0xff)<<26) | (seqid&0x3ffffff))
+#define STORE_SEQ_IN_MSGID(seq, seqid) \
+	((((seq) & 0x3f) << 26) | ((seqid) & 0x3ffffff))
 
 #define GET_SEQ_FROM_MSGID(msgid, seq, seqid) \
 	do {								\
-		seq = ((msgid >> 26) & 0x3f);				\
-		seqid = (msgid & 0x3fffff);				\
+		seq = (((msgid) >> 26) & 0x3f);				\
+		seqid = ((msgid) & 0x3ffffff);				\
 	} while (0)
 
-#define NEXT_SEQID(seqid) (((seqid) + 1) & 0x3fffff)
+#define NEXT_SEQID(seqid) (((seqid) + 1) & 0x3ffffff)
 
 struct ipmi_channel {
 	unsigned char medium;
@@ -918,7 +919,7 @@ static int intf_err_seq(ipmi_smi_t   intf,
 
 
 int ipmi_create_user(unsigned int          if_num,
-		     struct ipmi_user_hndl *handler,
+		     const struct ipmi_user_hndl *handler,
 		     void                  *handler_data,
 		     ipmi_user_t           *user)
 {
@@ -2396,7 +2397,7 @@ static umode_t bmc_dev_attr_is_visible(struct kobject *kobj,
 	return mode;
 }
 
-static struct attribute_group bmc_dev_attr_group = {
+static const struct attribute_group bmc_dev_attr_group = {
 	.attrs		= bmc_dev_attrs,
 	.is_visible	= bmc_dev_attr_is_visible,
 };
@@ -2406,7 +2407,7 @@ static const struct attribute_group *bmc_dev_attr_groups[] = {
 	NULL
 };
 
-static struct device_type bmc_device_type = {
+static const struct device_type bmc_device_type = {
 	.groups		= bmc_dev_attr_groups,
 };
 
@@ -2930,12 +2931,16 @@ static void deliver_smi_err_response(ipmi_smi_t intf,
 				     struct ipmi_smi_msg *msg,
 				     unsigned char err)
 {
+	int rv;
 	msg->rsp[0] = msg->data[0] | 4;
 	msg->rsp[1] = msg->data[1];
 	msg->rsp[2] = err;
 	msg->rsp_size = 3;
-	/* It's an error, so it will never requeue, no need to check return. */
-	handle_one_recv_msg(intf, msg);
+
+	/* This will never requeue, but it may ask us to free the message. */
+	rv = handle_one_recv_msg(intf, msg);
+	if (rv == 0)
+		ipmi_free_smi_msg(msg);
 }
 
 static void cleanup_smi_msgs(ipmi_smi_t intf)
@@ -4654,3 +4659,4 @@ MODULE_AUTHOR("Corey Minyard <minyard@mvista.com>");
 MODULE_DESCRIPTION("Incoming and outgoing message routing for an IPMI"
 		   " interface.");
 MODULE_VERSION(IPMI_DRIVER_VERSION);
+MODULE_SOFTDEP("post: ipmi_devintf");

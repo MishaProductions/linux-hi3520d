@@ -460,8 +460,9 @@ static void ipu_di_config_clock(struct ipu_di *di,
 
 		error = rate / (sig->mode.pixelclock / 1000);
 
-		dev_dbg(di->ipu->dev, "  IPU clock can give %lu with divider %u, error %d.%u%%\n",
-			rate, div, (signed)(error - 1000) / 10, error % 10);
+		dev_dbg(di->ipu->dev, "  IPU clock can give %lu with divider %u, error %c%d.%d%%\n",
+			rate, div, error < 1000 ? '-' : '+',
+			abs(error - 1000) / 10, abs(error - 1000) % 10);
 
 		/* Allow a 1% error */
 		if (error < 1010 && error >= 990) {
@@ -535,7 +536,7 @@ int ipu_di_adjust_videomode(struct ipu_di *di, struct videomode *mode)
 		return -EINVAL;
 	}
 
-	dev_warn(di->ipu->dev, "videomode adapted for IPU restrictions\n");
+	dev_dbg(di->ipu->dev, "videomode adapted for IPU restrictions\n");
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ipu_di_adjust_videomode);

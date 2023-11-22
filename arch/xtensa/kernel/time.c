@@ -34,9 +34,9 @@
 unsigned long ccount_freq;		/* ccount Hz */
 EXPORT_SYMBOL(ccount_freq);
 
-static cycle_t ccount_read(struct clocksource *cs)
+static u64 ccount_read(struct clocksource *cs)
 {
-	return (cycle_t)get_ccount();
+	return (u64)get_ccount();
 }
 
 static u64 notrace ccount_sched_clock_read(void)
@@ -146,6 +146,7 @@ static void __init calibrate_ccount(void)
 	cpu = of_find_compatible_node(NULL, NULL, "cdns,xtensa-cpu");
 	if (cpu) {
 		clk = of_clk_get(cpu, 0);
+		of_node_put(cpu);
 		if (!IS_ERR(clk)) {
 			ccount_freq = clk_get_rate(clk);
 			return;
@@ -187,7 +188,7 @@ void __init time_init(void)
 	local_timer_setup(0);
 	setup_irq(this_cpu_ptr(&ccount_timer)->evt.irq, &timer_irqaction);
 	sched_clock_register(ccount_sched_clock_read, 32, ccount_freq);
-	clocksource_probe();
+	timer_probe();
 }
 
 /*

@@ -324,7 +324,7 @@ static int mrp_pdu_init(struct mrp_applicant *app)
 	skb_reset_network_header(skb);
 	skb_reset_transport_header(skb);
 
-	ph = (struct mrp_pdu_hdr *)__skb_put(skb, sizeof(*ph));
+	ph = __skb_put(skb, sizeof(*ph));
 	ph->version = app->app->version;
 
 	app->pdu = skb;
@@ -337,7 +337,7 @@ static int mrp_pdu_append_end_mark(struct mrp_applicant *app)
 
 	if (skb_tailroom(app->pdu) < sizeof(*endmark))
 		return -1;
-	endmark = (__be16 *)__skb_put(app->pdu, sizeof(*endmark));
+	endmark = __skb_put(app->pdu, sizeof(*endmark));
 	put_unaligned(MRP_END_MARK, endmark);
 	return 0;
 }
@@ -381,7 +381,7 @@ static int mrp_pdu_append_msg_hdr(struct mrp_applicant *app,
 
 	if (skb_tailroom(app->pdu) < sizeof(*mh))
 		return -1;
-	mh = (struct mrp_msg_hdr *)__skb_put(app->pdu, sizeof(*mh));
+	mh = __skb_put(app->pdu, sizeof(*mh));
 	mh->attrtype = attrtype;
 	mh->attrlen = attrlen;
 	mrp_cb(app->pdu)->mh = mh;
@@ -395,8 +395,7 @@ static int mrp_pdu_append_vecattr_hdr(struct mrp_applicant *app,
 
 	if (skb_tailroom(app->pdu) < sizeof(*vah) + attrlen)
 		return -1;
-	vah = (struct mrp_vecattr_hdr *)__skb_put(app->pdu,
-						  sizeof(*vah) + attrlen);
+	vah = __skb_put(app->pdu, sizeof(*vah) + attrlen);
 	put_unaligned(0, &vah->lenflags);
 	memcpy(vah->firstattrvalue, firstattrvalue, attrlen);
 	mrp_cb(app->pdu)->vah = vah;
@@ -448,7 +447,7 @@ again:
 	if (!pos) {
 		if (skb_tailroom(app->pdu) < sizeof(u8))
 			goto queue;
-		vaevents = (u8 *)__skb_put(app->pdu, sizeof(u8));
+		vaevents = __skb_put(app->pdu, sizeof(u8));
 	} else {
 		vaevents = (u8 *)(skb_tail_pointer(app->pdu) - sizeof(u8));
 	}
@@ -610,7 +609,10 @@ static void mrp_join_timer(unsigned long data)
 	spin_unlock(&app->lock);
 
 	mrp_queue_xmit(app);
-	mrp_join_timer_arm(app);
+	spin_lock(&app->lock);
+	if (likely(app->active))
+		mrp_join_timer_arm(app);
+	spin_unlock(&app->lock);
 }
 
 static void mrp_periodic_timer_arm(struct mrp_applicant *app)
@@ -624,11 +626,12 @@ static void mrp_periodic_timer(unsigned long data)
 	struct mrp_applicant *app = (struct mrp_applicant *)data;
 
 	spin_lock(&app->lock);
-	mrp_mad_event(app, MRP_EVENT_PERIODIC);
-	mrp_pdu_queue(app);
+	if (likely(app->active)) {
+		mrp_mad_event(app, MRP_EVENT_PERIODIC);
+		mrp_pdu_queue(app);
+		mrp_periodic_timer_arm(app);
+	}
 	spin_unlock(&app->lock);
-
-	mrp_periodic_timer_arm(app);
 }
 
 static int mrp_pdu_parse_end_mark(struct sk_buff *skb, int *offset)
@@ -876,6 +879,7 @@ int mrp_init_applicant(struct net_device *dev, struct mrp_application *appl)
 	app->dev = dev;
 	app->app = appl;
 	app->mad = RB_ROOT;
+	app->active = true;
 	spin_lock_init(&app->lock);
 	skb_queue_head_init(&app->queue);
 	rcu_assign_pointer(dev->mrp_port->applicants[appl->type], app);
@@ -905,6 +909,9 @@ void mrp_uninit_applicant(struct net_device *dev, struct mrp_application *appl)
 
 	RCU_INIT_POINTER(port->applicants[appl->type], NULL);
 
+	spin_lock_bh(&app->lock);
+	app->active = false;
+	spin_unlock_bh(&app->lock);
 	/* Delete timer and generate a final TX event to flush out
 	 * all pending messages before the applicant is gone.
 	 */

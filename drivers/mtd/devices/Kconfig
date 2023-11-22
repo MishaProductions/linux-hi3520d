@@ -95,6 +95,16 @@ config MTD_M25P80
 	  if you want to specify device partitioning or to use a device which
 	  doesn't support the JEDEC ID instruction.
 
+config MTD_MCHP23K256
+	tristate "Microchip 23K256 SRAM"
+	depends on SPI_MASTER
+	help
+	  This enables access to Microchip 23K256 SRAM chips, using SPI.
+
+	  Set up your spi devices with the right board-specific
+	  platform data, or a device tree description if you want to
+	  specify device partitioning
+
 config MTD_SPEAR_SMI
 	tristate "SPEAR MTD NOR Support through SMI controller"
 	depends on PLAT_SPEAR
@@ -220,15 +230,5 @@ config BCH_CONST_M
 config BCH_CONST_T
 	default 4
 endif
-
-config MTD_SPI_IDS
-	bool "SPI Flash Timing Cycles Probe Function"
-	default y
-	help
-	  This option enables hisfc300/hisfc350 used spi flash timing cylces
-	  probe function.
-	  If your use hisfc300 and hisfc350, this function should be select.
-
-source "drivers/mtd/devices/hisfc350/Kconfig"
 
 endmenu

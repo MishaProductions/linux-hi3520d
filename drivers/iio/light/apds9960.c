@@ -63,9 +63,6 @@
 #define APDS9960_REG_CONTROL_PGAIN_MASK_SHIFT	2
 
 #define APDS9960_REG_CONFIG_2	0x90
-#define APDS9960_REG_CONFIG_2_GGAIN_MASK	0x60
-#define APDS9960_REG_CONFIG_2_GGAIN_MASK_SHIFT	5
-
 #define APDS9960_REG_ID		0x92
 
 #define APDS9960_REG_STATUS	0x93
@@ -86,6 +83,9 @@
 #define APDS9960_REG_GCONF_1_GFIFO_THRES_MASK_SHIFT	6
 
 #define APDS9960_REG_GCONF_2	0xa3
+#define APDS9960_REG_GCONF_2_GGAIN_MASK			0x60
+#define APDS9960_REG_GCONF_2_GGAIN_MASK_SHIFT		5
+
 #define APDS9960_REG_GOFFSET_U	0xa4
 #define APDS9960_REG_GOFFSET_D	0xa5
 #define APDS9960_REG_GPULSE	0xa6
@@ -343,7 +343,7 @@ static struct attribute *apds9960_attributes[] = {
 	NULL,
 };
 
-static struct attribute_group apds9960_attribute_group = {
+static const struct attribute_group apds9960_attribute_group = {
 	.attrs = apds9960_attributes,
 };
 
@@ -404,9 +404,9 @@ static int apds9960_set_pxs_gain(struct apds9960_data *data, int val)
 			}
 
 			ret = regmap_update_bits(data->regmap,
-				APDS9960_REG_CONFIG_2,
-				APDS9960_REG_CONFIG_2_GGAIN_MASK,
-				idx << APDS9960_REG_CONFIG_2_GGAIN_MASK_SHIFT);
+				APDS9960_REG_GCONF_2,
+				APDS9960_REG_GCONF_2_GGAIN_MASK,
+				idx << APDS9960_REG_GCONF_2_GGAIN_MASK_SHIFT);
 			if (!ret)
 				data->pxs_gain = idx;
 			mutex_unlock(&data->lock);
@@ -1112,6 +1112,8 @@ static int apds9960_runtime_resume(struct device *dev)
 #endif
 
 static const struct dev_pm_ops apds9960_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+				pm_runtime_force_resume)
 	SET_RUNTIME_PM_OPS(apds9960_runtime_suspend,
 			   apds9960_runtime_resume, NULL)
 };
@@ -1122,9 +1124,16 @@ static const struct i2c_device_id apds9960_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, apds9960_id);
 
+static const struct of_device_id apds9960_of_match[] = {
+	{ .compatible = "avago,apds9960" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, apds9960_of_match);
+
 static struct i2c_driver apds9960_driver = {
 	.driver = {
 		.name	= APDS9960_DRV_NAME,
+		.of_match_table = apds9960_of_match,
 		.pm	= &apds9960_pm_ops,
 	},
 	.probe		= apds9960_probe,

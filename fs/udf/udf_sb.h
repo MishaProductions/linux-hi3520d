@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_UDF_SB_H
 #define __LINUX_UDF_SB_H
 
@@ -54,6 +55,8 @@
 
 #define MF_DUPLICATE_MD		0x01
 #define MF_MIRROR_FE_LOADED	0x02
+
+#define EFSCORRUPTED EUCLEAN
 
 struct udf_meta_data {
 	__u32	s_meta_file_loc;
