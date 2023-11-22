@@ -437,7 +437,7 @@ static int hieth_net_hard_start_xmit(
 
 	ld->stats.tx_packets++;
 	ld->stats.tx_bytes += skb->len;
-	netdev_sent_queue(dev, skb->len);
+	//netdev_sent_queue(dev, skb->len);
 
 	hieth_clear_irqstatus(ld, UD_BIT_NAME(HIETH_INT_TXQUE_RDY));
 	if (!hieth_hw_xmitq_ready(ld)) {
