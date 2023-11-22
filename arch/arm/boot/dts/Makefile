@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 ifeq ($(CONFIG_OF),y)
 
+dtb-$(CONFIG_ARCH_HI3520D) += hi3520d.dtb
 dtb-$(CONFIG_ARCH_ALPINE) += \
 	alpine-db.dtb
 dtb-$(CONFIG_MACH_ARTPEC6) += \

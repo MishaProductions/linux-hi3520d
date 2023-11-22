@@ -379,6 +379,18 @@ config ARCH_EBSA110
 	  Ethernet interface, two PCMCIA sockets, two serial ports and a
 	  parallel port.
 
+config ARCH_HI3520D
+	bool "hisilicon hi3520d family"
+	select ARM_AMBA
+	select CLKDEV_LOOKUP
+	select HAVE_CLK
+	select HAVE_SCHED_CLOCK
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+
+	help
+	  This enables support for Hisilicon hi3520d platform.
+
 config ARCH_EP93XX
 	bool "EP93xx-based"
 	select ARCH_HAS_HOLES_MEMORYMODEL
@@ -859,6 +871,10 @@ source "arch/arm/mach-w90x900/Kconfig"
 source "arch/arm/mach-zx/Kconfig"
 
 source "arch/arm/mach-zynq/Kconfig"
+
+if ARCH_HI3520D
+source "arch/arm/mach-hi3520d/Kconfig"
+endif
 
 # ARMv7-M architecture
 config ARCH_EFM32
