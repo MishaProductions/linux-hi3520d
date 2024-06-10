@@ -29,9 +29,8 @@
 
     pclk: pclk@0 {
 		#clock-cells = <0>;
-		compatible = "hisi,hi3520d-clock";
+		compatible = "fixed-clock";
 		clock-frequency = <300000000>;
-        interrupts = <0 3 0>;
 	};
 
     uartclk: uartclk {
@@ -39,8 +38,11 @@
 		compatible = "fixed-clock";
 		clock-frequency = <75000000>;
 	};
-
-
+    timerclk: timerclk {
+		#clock-cells = <0>;
+		compatible = "fixed-clock";
+		clock-frequency = <75000000>;
+	};
 
     soc: soc {
         #address-cells = <1>;
@@ -49,6 +51,35 @@
 
         /* child and parent address space 1:1 mapped */
         ranges;
+
+        timer0: timer0@20000000 {
+			compatible = "arm,sp804", "arm,primecell";
+			reg = <0x20000000 0x1000>;
+			interrupts = <GIC_SPI 3 0>, <GIC_SPI 3 0>;
+			clocks = <&timerclk>;
+			clock-names = "apb_pclk";
+		};
+        timer1: timer1@20010000 {
+			compatible = "arm,sp804", "arm,primecell";
+			reg = <0x20010000 0x1000>;
+			interrupts = <GIC_SPI 4 0>, <GIC_SPI 4 0>;
+			clocks = <&timerclk>;
+			clock-names = "apb_pclk";
+		};
+        timer2: timer2@20130000 {
+			compatible = "arm,sp804", "arm,primecell";
+			reg = <0x20130000 0x1000>;
+			interrupts = <GIC_SPI 5 0>, <GIC_SPI 5 0>;
+			clocks = <&timerclk>;
+			clock-names = "apb_pclk";
+		};
+        timer3: timer3@20140000 {
+			compatible = "arm,sp804", "arm,primecell";
+			reg = <0x20140000 0x1000>;
+			interrupts = <GIC_SPI 6 0>, <GIC_SPI 6 0>;
+			clocks = <&timerclk>;
+			clock-names = "apb_pclk";
+		};
 
         amba {
 			#address-cells = <1>;
@@ -61,7 +92,6 @@
                 interrupt-controller;
                 #interrupt-cells = <3>;
                 #address-cells = <0>;
-                /*arm,routable-irqs = <64>;*/
                 /*  gic dist base, gic cpu base*/
                 reg = <0x20301000 0xF00>, <0x20300100 0xF00>; //cpu
             };
@@ -72,7 +102,7 @@
                 reg = <0x20080000 0x1000>;
                 clocks = <&uartclk>;
                 clock-names = "apb_pclk";
-                interrupts = <0 8 0>;
+                interrupts = <GIC_SPI 8 0>;
             };
 
             uart1: serial@20090000 {
@@ -80,32 +110,32 @@
                 reg = <0x20090000 0x1000>;
                 clocks = <&uartclk>; 
                 clock-names = "apb_pclk";
-                interrupts = <0 9 0>;
+                interrupts = <GIC_SPI 9 0>;
             };
 
             sata0: sata@10080000 {
 			    compatible		= "hisi,hi3520d-ahci", "generic-ahci";
 			    reg			= <0x10080000 0xFFFF>;
-			    interrupts		= <0 20 0>;
+			    interrupts		= <GIC_SPI 20 0>;
 		    };
 
             eth: eth@10090000 {
                 compatible		= "hisilicon-eth";
 			    reg			= <0x10090000 0xFFFF>;
-			    interrupts		= <0 24 0>;
+			    interrupts		= <GIC_SPI 24 0>;
             };
 
 
             ehci@0x100b0000 {
 			    compatible = "generic-ehci";
 			    reg = < 0x100b0000 0xFFFF >;
-			    interrupts = < 0 21 0 >;
+			    interrupts = <GIC_SPI 21 0 >;
 		    };
 
             ohci@0x100a0000 {
                 compatible = "generic-ohci";
 			    reg = < 0x100a0000 0xFFFF >;
-			    interrupts = < 0 22 0 >;
+			    interrupts = < GIC_SPI 22 0 >;
 		    };
         };
     };

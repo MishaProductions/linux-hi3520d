@@ -30,6 +30,8 @@
 #include <linux/of_platform.h>
 #include <asm/setup.h>
 
+#define REG_PERI_CRG57     IO_ADDRESS(CRG_REG_BASE + 0xe4)
+
 static struct map_desc hi3520d_io_desc[] __initdata = {
 	{
 		.virtual        = HI3520D_IOCH1_VIRT,
@@ -48,6 +50,7 @@ static struct map_desc hi3520d_io_desc[] __initdata = {
 void __init hi3520d_map_io(void)
 {
 	int i;
+	unsigned long reg = 0;
 
 	iotable_init(hi3520d_io_desc, ARRAY_SIZE(hi3520d_io_desc));
 
@@ -58,6 +61,11 @@ void __init hi3520d_map_io(void)
 		edb_putstr(" T: ");     edb_putul(hi3520d_io_desc[i].type);
 		edb_putstr("\n");
 	}
+
+	/* hi3520d uart use apb bus clk */
+	reg = readl((void*)(REG_PERI_CRG57));
+	reg &= ~UART_CKSEL_APB;
+	writel(reg, (void*)(REG_PERI_CRG57));
 
 	edb_trace();
 }
