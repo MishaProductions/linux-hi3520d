@@ -30,7 +30,18 @@
 #include <linux/of_platform.h>
 #include <asm/setup.h>
 
+// Imports from other files...
+extern void hi_sata_init(void __iomem *mmio);
+extern void register_hiusb(void);
+
 #define REG_PERI_CRG57     IO_ADDRESS(CRG_REG_BASE + 0xe4)
+
+#define muxctrl_reg0 0x0
+#define muxctrl_reg1 0x4
+#define muxctrl_reg2 0x8
+#define muxctrl_reg3 0xc
+#define muxctrl_reg4 0x10
+
 
 static struct map_desc hi3520d_io_desc[] __initdata = {
 	{
@@ -70,9 +81,18 @@ void __init hi3520d_map_io(void)
 	edb_trace();
 }
 
-// Imports from other files...
-extern void hi_sata_init(void __iomem *mmio);
-extern void register_hiusb(void);
+void __init hi3520d_setup_pinmux(void)
+{
+	// setup multiplexing
+	// configure VI_ADC_CLK pin for VI_ADC_CLK
+	__raw_writel(1, (void*)(IO_ADDRESS(IOCONFIG_BASE) + muxctrl_reg0));
+	// Configure VIU0* pins.
+	__raw_writel(0, (void*)(IO_ADDRESS(IOCONFIG_BASE) + muxctrl_reg1));
+	// configure VGA_HS pin to use VGA instead of GPIO2_0
+	__raw_writel(1, (void*)(IO_ADDRESS(IOCONFIG_BASE) + muxctrl_reg3));
+	// configure VGA_VS pin to use VGA instead of GPIO2_0
+	__raw_writel(1, (void*)(IO_ADDRESS(IOCONFIG_BASE) + muxctrl_reg3));
+}
 
 void __init hi3520d_init(void)
 {
@@ -89,28 +109,27 @@ void __init hi3520d_init(void)
 	register_hiusb();
 	#endif
 
+	hi3520d_setup_pinmux();
+
+	early_print("creating device tree...\n");
 	ret = of_platform_populate(NULL, of_default_bus_match_table, NULL,
 				   NULL);
 	if (ret) {
 		early_print("of_platform_populate failed: %d\n", ret);
 	}
-
-	edb_trace();
-}
-
-void hi3520d_restart(enum reboot_mode mode, const char *cmd)
-{
-	__raw_writel(~0, (void*)(IO_ADDRESS(SYS_CTRL_BASE) + REG_SC_SYSRES));
+	else
+	{
+		early_print("created device tree\n");
+	}
 }
 
 static const char __initconst *hi3520d_dt_compat[] = {
 	"hisi,hi3520d",
-	NULL,
+	NULL
 };
 
 DT_MACHINE_START(HI3520D, "hi3520d")
 	.map_io         = hi3520d_map_io,
 	.init_machine   = hi3520d_init,
-	.restart = hi3520d_restart,
 	.dt_compat	= hi3520d_dt_compat,
 MACHINE_END

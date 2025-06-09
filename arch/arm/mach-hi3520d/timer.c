@@ -191,8 +191,13 @@ static int __init hi3520d_clocksource_init(void)
 	return 0;
 }
 
+
+static struct clk *clk[2];
+static struct clk_onecell_data clk_data;
+
 void __init hi3520d_timerdev_init(struct device_node *np)
 {
+    unsigned long reg = 0, busclk = 0, uartclk;
     timer_preinit();
     edb_trace();
 
@@ -205,9 +210,9 @@ void __init hi3520d_timerdev_init(struct device_node *np)
 
 	early_print("timer IRQ: %d\n", irq);
 	
-   //s setup_irq(irq, &hi3520d_timer_irq);
+    setup_irq(irq, &hi3520d_timer_irq);
 
-	//hi3520d_clocksource_init();
+	hi3520d_clocksource_init();
 	timer0_clockevent.mult =
 		div_sc(timer0_clk_hz, NSEC_PER_SEC, timer0_clockevent.shift);
 	timer0_clockevent.max_delta_ns =
@@ -217,5 +222,23 @@ void __init hi3520d_timerdev_init(struct device_node *np)
 
 	timer0_clockevent.cpumask = cpumask_of(0);
 	clockevents_register_device(&timer0_clockevent);
+
+
+    /* hi3520d uart use apb bus clk */
+	reg = readl((void*)(REG_PERI_CRG57));
+	reg &= ~UART_CKSEL_APB;
+	writel(reg, (void*)(REG_PERI_CRG57));
+
+	busclk = get_bus_clk();
+	uartclk = busclk / 4;
+    early_print("busclock: %d\n", busclk);
+    early_print("uart clock: %d\n", uartclk);
+    //clk[0] = clk_register_fixed_rate(NULL, "uart:0", NULL, 0, uartclk);
+    //clk[1] = clk_register_fixed_rate(NULL, "uart:1", NULL, 0, uartclk);
+    
+    // register clk device
+    clk_data.clks = clk;
+	clk_data.clk_num = 0;//ARRAY_SIZE(clk);
+	of_clk_add_provider(np, of_clk_src_onecell_get, NULL);
 }
 CLK_OF_DECLARE(hi3520d_clock, "hisi,hi3520d-clock", hi3520d_timerdev_init);
