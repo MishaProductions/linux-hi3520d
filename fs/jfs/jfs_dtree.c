@@ -1,19 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *   Copyright (C) International Business Machines Corp., 2000-2004
- *
- *   This program is free software;  you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
- *   the GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program;  if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 /*
@@ -130,7 +117,8 @@ do {									\
 	if (!(RC)) {							\
 		if (((P)->header.nextindex >				\
 		     (((BN) == 0) ? DTROOTMAXSLOT : (P)->header.maxslot)) || \
-		    ((BN) && ((P)->header.maxslot > DTPAGEMAXSLOT))) {	\
+		    ((BN) && (((P)->header.maxslot > DTPAGEMAXSLOT) ||	\
+		    ((P)->header.stblindex >= DTPAGEMAXSLOT)))) {	\
 			BT_PUTPAGE(MP);					\
 			jfs_error((IP)->i_sb,				\
 				  "DT_GETPAGE: dtree page corrupt\n");	\
@@ -594,7 +582,8 @@ int dtSearch(struct inode *ip, struct component_name * key, ino_t * data,
 	struct component_name ciKey;
 	struct super_block *sb = ip->i_sb;
 
-	ciKey.name = kmalloc((JFS_NAME_MAX + 1) * sizeof(wchar_t), GFP_NOFS);
+	ciKey.name = kmalloc_array(JFS_NAME_MAX + 1, sizeof(wchar_t),
+				   GFP_NOFS);
 	if (!ciKey.name) {
 		rc = -ENOMEM;
 		goto dtSearch_Exit2;
@@ -644,6 +633,11 @@ int dtSearch(struct inode *ip, struct component_name * key, ino_t * data,
 		 */
 		for (base = 0, lim = p->header.nextindex; lim; lim >>= 1) {
 			index = base + (lim >> 1);
+
+			if (stbl[index] < 0) {
+				rc = -EIO;
+				goto out;
+			}
 
 			if (p->header.flag & BT_LEAF) {
 				/* uppercase leaf name to compare */
@@ -957,7 +951,7 @@ static int dtSplitUp(tid_t tid,
 	smp = split->mp;
 	sp = DT_PAGE(ip, smp);
 
-	key.name = kmalloc((JFS_NAME_MAX + 2) * sizeof(wchar_t), GFP_NOFS);
+	key.name = kmalloc_array(JFS_NAME_MAX + 2, sizeof(wchar_t), GFP_NOFS);
 	if (!key.name) {
 		DT_PUTPAGE(smp);
 		rc = -ENOMEM;
@@ -1982,7 +1976,7 @@ static int dtSplitRoot(tid_t tid,
 		do {
 			f = &rp->slot[fsi];
 			fsi = f->next;
-		} while (fsi != -1);
+		} while (fsi >= 0);
 
 		f->next = n;
 	}
@@ -2976,7 +2970,7 @@ struct jfs_dirent {
 	loff_t position;
 	int ino;
 	u16 name_len;
-	char name[0];
+	char name[];
 };
 
 /*
@@ -3194,6 +3188,14 @@ int jfs_readdir(struct file *file, struct dir_context *ctx)
 		stbl = DT_GETSTBL(p);
 
 		for (i = index; i < p->header.nextindex; i++) {
+			if (stbl[i] < 0 || stbl[i] > 127) {
+				jfs_err("JFS: Invalid stbl[%d] = %d for inode %ld, block = %lld",
+					i, stbl[i], (long)ip->i_ino, (long long)bn);
+				free_page(dirent_buf);
+				DT_PUTPAGE(mp);
+				return -EIO;
+			}
+
 			d = (struct ldtentry *) & p->slot[stbl[i]];
 
 			if (((long) jfs_dirent + d->namlen + 1) >
@@ -3389,6 +3391,13 @@ static int dtReadFirst(struct inode *ip, struct btstack * btstack)
 
 		/* get the leftmost entry */
 		stbl = DT_GETSTBL(p);
+
+		if (stbl[0] < 0 || stbl[0] > 127) {
+			DT_PUTPAGE(mp);
+			jfs_error(ip->i_sb, "stbl[0] out of bound\n");
+			return -EIO;
+		}
+
 		xd = (pxd_t *) & p->slot[stbl[0]];
 
 		/* get the child page block address */
@@ -3779,12 +3788,12 @@ static int ciGetLeafPrefixKey(dtpage_t * lp, int li, dtpage_t * rp,
 	struct component_name lkey;
 	struct component_name rkey;
 
-	lkey.name = kmalloc((JFS_NAME_MAX + 1) * sizeof(wchar_t),
+	lkey.name = kmalloc_array(JFS_NAME_MAX + 1, sizeof(wchar_t),
 					GFP_KERNEL);
 	if (lkey.name == NULL)
 		return -ENOMEM;
 
-	rkey.name = kmalloc((JFS_NAME_MAX + 1) * sizeof(wchar_t),
+	rkey.name = kmalloc_array(JFS_NAME_MAX + 1, sizeof(wchar_t),
 					GFP_KERNEL);
 	if (rkey.name == NULL) {
 		kfree(lkey.name);

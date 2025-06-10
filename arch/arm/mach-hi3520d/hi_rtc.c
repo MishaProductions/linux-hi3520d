@@ -241,7 +241,7 @@ static int rtc_reset_first(void)
  * converse the data type from year.mouth.data.hour.minite.second to second
  * define 2000.1.1.0.0.0 as jumping-off point
  */
-static int rtcdate2second(rtc_time_t compositetime, unsigned long *ptimeOfsecond)
+static int rtcdate2second(rtc_time_t compositetime, u64 *ptimeOfsecond)
 {
 	struct rtc_time tmp;
 
@@ -259,7 +259,7 @@ static int rtcdate2second(rtc_time_t compositetime, unsigned long *ptimeOfsecond
 	if (rtc_valid_tm(&tmp))
 		return -1;
 
-	rtc_tm_to_time(&tmp, ptimeOfsecond);
+	*ptimeOfsecond = rtc_tm_to_time64(&tmp);
 
 	return 0;
 }
@@ -268,11 +268,11 @@ static int rtcdate2second(rtc_time_t compositetime, unsigned long *ptimeOfsecond
  * converse the data type from second to year.mouth.data.hour.minite.second
  * define 2000.1.1.0.0.0 as jumping-off point
  */
-static int rtcSecond2Date(rtc_time_t *compositetime, unsigned long timeOfsecond)
+static int rtcSecond2Date(rtc_time_t *compositetime, u64 timeOfsecond)
 {
 	struct rtc_time tmp;
 
-	rtc_time_to_tm(timeOfsecond, &tmp);
+	rtc_time64_to_tm(timeOfsecond, &tmp);
 	compositetime->year = (unsigned int)tmp.tm_year + 1900;
 	compositetime->month = (unsigned int)tmp.tm_mon + 1;
 	compositetime->date = (unsigned int)tmp.tm_mday;
@@ -309,7 +309,7 @@ static int hirtc_get_alarm(struct rtc_time *compositetime)
 	HI_MSG("day %d\n", day);
 	seconds = second + minute * 60 + hour * 60 * 60 + day * 24 * 60 * 60;
 
-	rtc_time_to_tm(seconds, compositetime);
+	rtc_time64_to_tm(seconds, compositetime);
 
 	return 0;
 }
@@ -317,7 +317,7 @@ static int hirtc_get_alarm(struct rtc_time *compositetime)
 static int hirtc_set_alarm(rtc_time_t compositetime)
 {
 	unsigned int days;
-	unsigned long seconds = 0;
+	u64 seconds = 0;
 
 	HI_MSG("RTC read time");
 	HI_MSG("\tyear %d", compositetime.year);
@@ -329,7 +329,7 @@ static int hirtc_set_alarm(rtc_time_t compositetime)
 	HI_MSG("\tweekday %d", compositetime.weekday);
 
 	rtcdate2second(compositetime, &seconds);
-	days = seconds / (60 * 60 * 24);
+	days = div_u64(seconds, (60 * 60 * 24));
 
 	spi_rtc_write(RTC_MR_10MS, 0);
 	spi_rtc_write(RTC_MR_S, compositetime.second);
@@ -358,7 +358,7 @@ static int hirtc_get_time(struct rtc_time *compositetime)
 	printk(KERN_INFO "day %d\n", day);
 	seconds = second + minute * 60 + hour * 60 * 60 + day * 24 * 60 * 60;
 
-	rtc_time_to_tm(seconds, compositetime);
+	rtc_time64_to_tm(seconds, compositetime);
 
 	return 0;
 }
@@ -367,11 +367,11 @@ static int hirtc_set_time(struct rtc_time *compositetime)
 {
 	unsigned char ret;
 	unsigned int days;
-	unsigned long seconds = 0;
+	u64 seconds = 0;
 	unsigned int cnt = 0;
 
-	rtc_tm_to_time(compositetime, &seconds);
-	days = seconds / (60 * 60 * 24);
+	rtc_time64_to_tm(seconds, compositetime);
+	days = div_u64(seconds, (60 * 60 * 24));
 
 	HI_MSG("day %d\n", days);
 
@@ -595,7 +595,7 @@ static long hi_rtc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return 0;
 }
 
-static void temperature_detection(unsigned long arg)
+static void temperature_detection(struct timer_list * data)
 {
 	int ret;
 	int cnt = 0;
@@ -775,9 +775,8 @@ static int __init rtc_init(void)
 	//	goto RTC_INIT_FAIL2;
 	//}
 
-	init_timer(&temperature_timer);
-	temperature_timer.function = temperature_detection;
-	temperature_timer.expires = jiffies + HZ * t_second;
+	timer_setup(&temperature_timer, temperature_detection, 0);
+	mod_timer(&temperature_timer, jiffies + HZ * t_second);
 
 #ifdef HI_FPGA
 	/* config SPI CLK */

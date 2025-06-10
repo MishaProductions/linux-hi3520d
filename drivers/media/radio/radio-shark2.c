@@ -62,7 +62,7 @@ struct shark_device {
 #ifdef SHARK_USE_LEDS
 	struct work_struct led_work;
 	struct led_classdev leds[NO_LEDS];
-	char led_names[NO_LEDS][32];
+	char led_names[NO_LEDS][64];
 	atomic_t brightness[NO_LEDS];
 	unsigned long brightness_new;
 #endif
@@ -320,7 +320,7 @@ static int usb_shark_probe(struct usb_interface *intf,
 	shark->tea.ops = &shark_tea_ops;
 	shark->tea.has_am = true;
 	shark->tea.write_before_read = true;
-	strlcpy(shark->tea.card, "Griffin radioSHARK2",
+	strscpy(shark->tea.card, "Griffin radioSHARK2",
 		sizeof(shark->tea.card));
 	usb_make_path(shark->usbdev, shark->tea.bus_info,
 		sizeof(shark->tea.bus_info));

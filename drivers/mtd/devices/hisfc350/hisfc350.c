@@ -21,7 +21,7 @@
 #include "spi_ids.h"
 #include "hisfc350.h"
 
-static inline int mtd_has_partitions(void) { return 1; }
+//static inline int mtd_has_partitions(void) { return 1; }
 #define THREE_BIT_START_UP 0
 
 #include "hisfc350_hi3520d.c"
@@ -650,7 +650,6 @@ static int hisfc350_reg_erase(struct mtd_info *mtd, struct erase_info *instr)
 				DBG_BUG("erase memory out of range.\n");
 		}
 		if (hisfc350_reg_erase_one_block(host, spi, offset)) {
-			instr->state = MTD_ERASE_FAILED;
 			mutex_unlock(&host->lock);
 			return -EIO;
 		}
@@ -659,9 +658,8 @@ static int hisfc350_reg_erase(struct mtd_info *mtd, struct erase_info *instr)
 		length -= spi->erase->size;
 	}
 
-	instr->state = MTD_ERASE_DONE;
 	mutex_unlock(&host->lock);
-	mtd_erase_callback(instr);
+	//mtd_erase_callback(instr);
 
 	return 0;
 }
@@ -1014,7 +1012,7 @@ static int hisfc350_driver_probe(struct platform_device * plat_dev)
 	int nr_parts = 0;
 	struct mtd_partition *parts = NULL;
 	int ret;
-
+return -ENOMEM;
 	host = kmalloc(sizeof(struct hisfc_host), GFP_KERNEL);
 	if (!host)
 		return -ENOMEM;
@@ -1022,14 +1020,14 @@ static int hisfc350_driver_probe(struct platform_device * plat_dev)
 
 	platform_set_drvdata(plat_dev, host);
 
-	host->sysreg = ioremap_nocache(CONFIG_HISFC350_SYSCTRL_ADDRESS,
+	host->sysreg = ioremap(CONFIG_HISFC350_SYSCTRL_ADDRESS,
 		HISFC350_SYSCTRL_LENGTH);
 	if (!host->sysreg) {
 		printk(KERN_ERR "spi system reg ioremap failed.\n");
 		goto fail;
 	}
 
-	host->regbase = ioremap_nocache(CONFIG_HISFC350_REG_BASE_ADDRESS,
+	host->regbase = ioremap(CONFIG_HISFC350_REG_BASE_ADDRESS,
 		HISFC350_REG_BASE_LEN);
 	host->set_system_clock = hisfc350_set_system_clock;
 	host->set_host_addr_mode = hisfc350_set_host_addr_mode;
@@ -1039,7 +1037,7 @@ static int hisfc350_driver_probe(struct platform_device * plat_dev)
 	}
 
 #ifdef HISFCV350_SUPPORT_BUS_READ
-	host->iobase = ioremap_nocache(CONFIG_HISFC350_BUFFER_BASE_ADDRESS,
+	host->iobase = ioremap(CONFIG_HISFC350_BUFFER_BASE_ADDRESS,
 		HISFC350_BUFFER_BASE_LEN);
 	if (!host->iobase) {
 		printk(KERN_ERR "spi buffer ioremap failed.\n");

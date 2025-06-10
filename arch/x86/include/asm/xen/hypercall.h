@@ -38,11 +38,13 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <linux/pgtable.h>
+#include <linux/instrumentation.h>
 
 #include <trace/events/xen.h>
 
+#include <asm/alternative.h>
 #include <asm/page.h>
-#include <asm/pgtable.h>
 #include <asm/smap.h>
 #include <asm/nospec-branch.h>
 
@@ -82,15 +84,24 @@ struct xen_dm_op_buf;
  *     - clobber the rest
  *
  * The result certainly isn't pretty, and it really shows up cpp's
- * weakness as as macro language.  Sorry.  (But let's just give thanks
+ * weakness as a macro language.  Sorry.  (But let's just give thanks
  * there aren't more than 5 arguments...)
  */
 
-extern struct { char _entry[32]; } hypercall_page[];
+void xen_hypercall_func(void);
+DECLARE_STATIC_CALL(xen_hypercall, xen_hypercall_func);
 
-#define __HYPERCALL		"call hypercall_page+%c[offset]"
-#define __HYPERCALL_ENTRY(x)						\
-	[offset] "i" (__HYPERVISOR_##x * sizeof(hypercall_page[0]))
+#ifdef MODULE
+#define __ADDRESSABLE_xen_hypercall
+#else
+#define __ADDRESSABLE_xen_hypercall __ADDRESSABLE_ASM_STR(__SCK__xen_hypercall)
+#endif
+
+#define __HYPERCALL					\
+	__ADDRESSABLE_xen_hypercall			\
+	"call __SCT__xen_hypercall"
+
+#define __HYPERCALL_ENTRY(x)	"a" (x)
 
 #ifdef CONFIG_X86_32
 #define __HYPERCALL_RETREG	"eax"
@@ -148,7 +159,7 @@ extern struct { char _entry[32]; } hypercall_page[];
 	__HYPERCALL_0ARG();						\
 	asm volatile (__HYPERCALL					\
 		      : __HYPERCALL_0PARAM				\
-		      : __HYPERCALL_ENTRY(name)				\
+		      : __HYPERCALL_ENTRY(__HYPERVISOR_ ## name)	\
 		      : __HYPERCALL_CLOBBER0);				\
 	(type)__res;							\
 })
@@ -159,7 +170,7 @@ extern struct { char _entry[32]; } hypercall_page[];
 	__HYPERCALL_1ARG(a1);						\
 	asm volatile (__HYPERCALL					\
 		      : __HYPERCALL_1PARAM				\
-		      : __HYPERCALL_ENTRY(name)				\
+		      : __HYPERCALL_ENTRY(__HYPERVISOR_ ## name)	\
 		      : __HYPERCALL_CLOBBER1);				\
 	(type)__res;							\
 })
@@ -170,7 +181,7 @@ extern struct { char _entry[32]; } hypercall_page[];
 	__HYPERCALL_2ARG(a1, a2);					\
 	asm volatile (__HYPERCALL					\
 		      : __HYPERCALL_2PARAM				\
-		      : __HYPERCALL_ENTRY(name)				\
+		      : __HYPERCALL_ENTRY(__HYPERVISOR_ ## name)	\
 		      : __HYPERCALL_CLOBBER2);				\
 	(type)__res;							\
 })
@@ -181,7 +192,7 @@ extern struct { char _entry[32]; } hypercall_page[];
 	__HYPERCALL_3ARG(a1, a2, a3);					\
 	asm volatile (__HYPERCALL					\
 		      : __HYPERCALL_3PARAM				\
-		      : __HYPERCALL_ENTRY(name)				\
+		      : __HYPERCALL_ENTRY(__HYPERVISOR_ ## name)	\
 		      : __HYPERCALL_CLOBBER3);				\
 	(type)__res;							\
 })
@@ -192,42 +203,57 @@ extern struct { char _entry[32]; } hypercall_page[];
 	__HYPERCALL_4ARG(a1, a2, a3, a4);				\
 	asm volatile (__HYPERCALL					\
 		      : __HYPERCALL_4PARAM				\
-		      : __HYPERCALL_ENTRY(name)				\
+		      : __HYPERCALL_ENTRY(__HYPERVISOR_ ## name)	\
 		      : __HYPERCALL_CLOBBER4);				\
 	(type)__res;							\
 })
 
-#define _hypercall5(type, name, a1, a2, a3, a4, a5)			\
-({									\
-	__HYPERCALL_DECLS;						\
-	__HYPERCALL_5ARG(a1, a2, a3, a4, a5);				\
-	asm volatile (__HYPERCALL					\
-		      : __HYPERCALL_5PARAM				\
-		      : __HYPERCALL_ENTRY(name)				\
-		      : __HYPERCALL_CLOBBER5);				\
-	(type)__res;							\
-})
-
 static inline long
-privcmd_call(unsigned call,
-	     unsigned long a1, unsigned long a2,
-	     unsigned long a3, unsigned long a4,
-	     unsigned long a5)
+xen_single_call(unsigned int call,
+		unsigned long a1, unsigned long a2,
+		unsigned long a3, unsigned long a4,
+		unsigned long a5)
 {
 	__HYPERCALL_DECLS;
 	__HYPERCALL_5ARG(a1, a2, a3, a4, a5);
 
-	if (call >= PAGE_SIZE / sizeof(hypercall_page[0]))
-		return -EINVAL;
-
-	stac();
-	asm volatile(CALL_NOSPEC
+	asm volatile(__HYPERCALL
 		     : __HYPERCALL_5PARAM
-		     : [thunk_target] "a" (&hypercall_page[call])
+		     : __HYPERCALL_ENTRY(call)
 		     : __HYPERCALL_CLOBBER5);
-	clac();
 
 	return (long)__res;
+}
+
+static __always_inline void __xen_stac(void)
+{
+	/*
+	 * Suppress objtool seeing the STAC/CLAC and getting confused about it
+	 * calling random code with AC=1.
+	 */
+	asm volatile(ANNOTATE_IGNORE_ALTERNATIVE
+		     ASM_STAC ::: "memory", "flags");
+}
+
+static __always_inline void __xen_clac(void)
+{
+	asm volatile(ANNOTATE_IGNORE_ALTERNATIVE
+		     ASM_CLAC ::: "memory", "flags");
+}
+
+static inline long
+privcmd_call(unsigned int call,
+	     unsigned long a1, unsigned long a2,
+	     unsigned long a3, unsigned long a4,
+	     unsigned long a5)
+{
+	long res;
+
+	__xen_stac();
+	res = xen_single_call(call, a1, a2, a3, a4, a5);
+	__xen_clac();
+
+	return res;
 }
 
 static inline int
@@ -257,44 +283,9 @@ HYPERVISOR_set_gdt(unsigned long *frame_list, int entries)
 }
 
 static inline int
-HYPERVISOR_stack_switch(unsigned long ss, unsigned long esp)
-{
-	return _hypercall2(int, stack_switch, ss, esp);
-}
-
-#ifdef CONFIG_X86_32
-static inline int
-HYPERVISOR_set_callbacks(unsigned long event_selector,
-			 unsigned long event_address,
-			 unsigned long failsafe_selector,
-			 unsigned long failsafe_address)
-{
-	return _hypercall4(int, set_callbacks,
-			   event_selector, event_address,
-			   failsafe_selector, failsafe_address);
-}
-#else  /* CONFIG_X86_64 */
-static inline int
-HYPERVISOR_set_callbacks(unsigned long event_address,
-			unsigned long failsafe_address,
-			unsigned long syscall_address)
-{
-	return _hypercall3(int, set_callbacks,
-			   event_address, failsafe_address,
-			   syscall_address);
-}
-#endif  /* CONFIG_X86_{32,64} */
-
-static inline int
 HYPERVISOR_callback_op(int cmd, void *arg)
 {
 	return _hypercall2(int, callback_op, cmd, arg);
-}
-
-static inline int
-HYPERVISOR_fpu_taskswitch(int set)
-{
-	return _hypercall1(int, fpu_taskswitch, set);
 }
 
 static inline int
@@ -368,15 +359,11 @@ HYPERVISOR_update_va_mapping(unsigned long va, pte_t new_val,
 		return _hypercall4(int, update_va_mapping, va,
 				   new_val.pte, new_val.pte >> 32, flags);
 }
-extern int __must_check xen_event_channel_op_compat(int, void *);
 
 static inline int
 HYPERVISOR_event_channel_op(int cmd, void *arg)
 {
-	int rc = _hypercall2(int, event_channel_op, cmd, arg);
-	if (unlikely(rc == -ENOSYS))
-		rc = xen_event_channel_op_compat(cmd, arg);
-	return rc;
+	return _hypercall2(int, event_channel_op, cmd, arg);
 }
 
 static inline int
@@ -391,34 +378,16 @@ HYPERVISOR_console_io(int cmd, int count, char *str)
 	return _hypercall3(int, console_io, cmd, count, str);
 }
 
-extern int __must_check xen_physdev_op_compat(int, void *);
-
 static inline int
 HYPERVISOR_physdev_op(int cmd, void *arg)
 {
-	int rc = _hypercall2(int, physdev_op, cmd, arg);
-	if (unlikely(rc == -ENOSYS))
-		rc = xen_physdev_op_compat(cmd, arg);
-	return rc;
+	return _hypercall2(int, physdev_op, cmd, arg);
 }
 
 static inline int
 HYPERVISOR_grant_table_op(unsigned int cmd, void *uop, unsigned int count)
 {
 	return _hypercall3(int, grant_table_op, cmd, uop, count);
-}
-
-static inline int
-HYPERVISOR_update_va_mapping_otherdomain(unsigned long va, pte_t new_val,
-					 unsigned long flags, domid_t domid)
-{
-	if (sizeof(new_val) == sizeof(long))
-		return _hypercall4(int, update_va_mapping_otherdomain, va,
-				   new_val.pte, flags, domid);
-	else
-		return _hypercall5(int, update_va_mapping_otherdomain, va,
-				   new_val.pte, new_val.pte >> 32,
-				   flags, domid);
 }
 
 static inline int
@@ -455,12 +424,6 @@ HYPERVISOR_suspend(unsigned long start_info_mfn)
 	return _hypercall3(int, sched_op, SCHEDOP_shutdown, &r, start_info_mfn);
 }
 
-static inline int
-HYPERVISOR_nmi_op(unsigned long op, unsigned long arg)
-{
-	return _hypercall2(int, nmi_op, op, arg);
-}
-
 static inline unsigned long __must_check
 HYPERVISOR_hvm_op(int op, void *arg)
 {
@@ -485,9 +448,9 @@ HYPERVISOR_dm_op(
 	domid_t dom, unsigned int nr_bufs, struct xen_dm_op_buf *bufs)
 {
 	int ret;
-	stac();
+	__xen_stac();
 	ret = _hypercall3(int, dm_op, dom, nr_bufs, bufs);
-	clac();
+	__xen_clac();
 	return ret;
 }
 
@@ -519,39 +482,6 @@ MULTI_update_va_mapping(struct multicall_entry *mcl, unsigned long va,
 }
 
 static inline void
-MULTI_grant_table_op(struct multicall_entry *mcl, unsigned int cmd,
-		     void *uop, unsigned int count)
-{
-	mcl->op = __HYPERVISOR_grant_table_op;
-	mcl->args[0] = cmd;
-	mcl->args[1] = (unsigned long)uop;
-	mcl->args[2] = count;
-
-	trace_xen_mc_entry(mcl, 3);
-}
-
-static inline void
-MULTI_update_va_mapping_otherdomain(struct multicall_entry *mcl, unsigned long va,
-				    pte_t new_val, unsigned long flags,
-				    domid_t domid)
-{
-	mcl->op = __HYPERVISOR_update_va_mapping_otherdomain;
-	mcl->args[0] = va;
-	if (sizeof(new_val) == sizeof(long)) {
-		mcl->args[1] = new_val.pte;
-		mcl->args[2] = flags;
-		mcl->args[3] = domid;
-	} else {
-		mcl->args[1] = new_val.pte;
-		mcl->args[2] = new_val.pte >> 32;
-		mcl->args[3] = flags;
-		mcl->args[4] = domid;
-	}
-
-	trace_xen_mc_entry(mcl, sizeof(new_val) == sizeof(long) ? 4 : 5);
-}
-
-static inline void
 MULTI_update_descriptor(struct multicall_entry *mcl, u64 maddr,
 			struct desc_struct desc)
 {
@@ -569,16 +499,6 @@ MULTI_update_descriptor(struct multicall_entry *mcl, u64 maddr,
 	}
 
 	trace_xen_mc_entry(mcl, sizeof(maddr) == sizeof(long) ? 2 : 4);
-}
-
-static inline void
-MULTI_memory_op(struct multicall_entry *mcl, unsigned int cmd, void *arg)
-{
-	mcl->op = __HYPERVISOR_memory_op;
-	mcl->args[0] = cmd;
-	mcl->args[1] = (unsigned long)arg;
-
-	trace_xen_mc_entry(mcl, 2);
 }
 
 static inline void
@@ -605,16 +525,6 @@ MULTI_mmuext_op(struct multicall_entry *mcl, struct mmuext_op *op, int count,
 	mcl->args[3] = domid;
 
 	trace_xen_mc_entry(mcl, 4);
-}
-
-static inline void
-MULTI_set_gdt(struct multicall_entry *mcl, unsigned long *frames, int entries)
-{
-	mcl->op = __HYPERVISOR_set_gdt;
-	mcl->args[0] = (unsigned long)frames;
-	mcl->args[1] = entries;
-
-	trace_xen_mc_entry(mcl, 2);
 }
 
 static inline void

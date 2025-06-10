@@ -74,7 +74,7 @@ static void ar5523_read_reply(struct ar5523 *ar, struct ar5523_cmd_hdr *hdr,
 
 	if (cmd->odata) {
 		if (cmd->olen < olen) {
-			ar5523_err(ar, "olen to small %d < %d\n",
+			ar5523_err(ar, "olen too small %d < %d\n",
 				   cmd->olen, olen);
 			cmd->olen = 0;
 			cmd->res = -EOVERFLOW;
@@ -900,9 +900,9 @@ static void ar5523_tx_work(struct work_struct *work)
 	mutex_unlock(&ar->mutex);
 }
 
-static void ar5523_tx_wd_timer(unsigned long arg)
+static void ar5523_tx_wd_timer(struct timer_list *t)
 {
-	struct ar5523 *ar = (struct ar5523 *) arg;
+	struct ar5523 *ar = from_timer(ar, t, tx_wd_timer);
 
 	ar5523_dbg(ar, "TX watchdog timer triggered\n");
 	ieee80211_queue_work(ar->hw, &ar->tx_wd_work);
@@ -1590,6 +1590,20 @@ static int ar5523_probe(struct usb_interface *intf,
 	struct ar5523 *ar;
 	int error = -ENOMEM;
 
+	static const u8 bulk_ep_addr[] = {
+		AR5523_CMD_TX_PIPE | USB_DIR_OUT,
+		AR5523_DATA_TX_PIPE | USB_DIR_OUT,
+		AR5523_CMD_RX_PIPE | USB_DIR_IN,
+		AR5523_DATA_RX_PIPE | USB_DIR_IN,
+		0};
+
+	if (!usb_check_bulk_endpoints(intf, bulk_ep_addr)) {
+		dev_err(&dev->dev,
+			"Could not find all expected endpoints\n");
+		error = -ENODEV;
+		goto out;
+	}
+
 	/*
 	 * Load firmware if the device requires it.  This will return
 	 * -ENXIO on success and we'll get called back afer the usb
@@ -1610,8 +1624,7 @@ static int ar5523_probe(struct usb_interface *intf,
 	mutex_init(&ar->mutex);
 
 	INIT_DELAYED_WORK(&ar->stat_work, ar5523_stat_work);
-	init_timer(&ar->tx_wd_timer);
-	setup_timer(&ar->tx_wd_timer, ar5523_tx_wd_timer, (unsigned long) ar);
+	timer_setup(&ar->tx_wd_timer, ar5523_tx_wd_timer, 0);
 	INIT_WORK(&ar->tx_wd_work, ar5523_tx_wd_work);
 	INIT_WORK(&ar->tx_work, ar5523_tx_work);
 	INIT_LIST_HEAD(&ar->tx_queue_pending);

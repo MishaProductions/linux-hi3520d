@@ -1,14 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
  *		operating system.  INET is implemented using the BSD Socket
  *		interface as the means of communication with the user level.
  *
  * Authors:	Lotsa people, from code originally in tcp
- *
- *	This program is free software; you can redistribute it and/or
- *      modify it under the terms of the GNU General Public License
- *      as published by the Free Software Foundation; either version
- *      2 of the License, or (at your option) any later version.
  */
 
 #ifndef _INET_HASHTABLES_H
@@ -79,6 +75,7 @@ struct inet_ehash_bucket {
 
 struct inet_bind_bucket {
 	possible_net_t		ib_net;
+	int			l3mdev;
 	unsigned short		port;
 	signed char		fastreuse;
 	signed char		fastreuseport;
@@ -114,10 +111,7 @@ struct inet_bind_hashbucket {
 #define LISTENING_NULLS_BASE (1U << 29)
 struct inet_listen_hashbucket {
 	spinlock_t		lock;
-	union {
-		struct hlist_head	head;
-		struct hlist_nulls_head	nulls_head;
-	};
+	struct hlist_nulls_head	nulls_head;
 };
 
 /* This is for listening sockets, thus all sockets which possess wildcards. */
@@ -138,26 +132,20 @@ struct inet_hashinfo {
 	/* Ok, let's try this, I give up, we do need a local binding
 	 * TCP hash as well as the others for fast bind/connect.
 	 */
-	struct inet_bind_hashbucket	*bhash;
-
-	unsigned int			bhash_size;
-	/* 4 bytes hole on 64 bit */
-
 	struct kmem_cache		*bind_bucket_cachep;
+	struct inet_bind_hashbucket	*bhash;
+	unsigned int			bhash_size;
 
-	/* All the above members are written once at bootup and
-	 * never written again _or_ are predominantly read-access.
-	 *
-	 * Now align to a new cache line as all the following members
-	 * might be often dirty.
-	 */
-	/* All sockets in TCP_LISTEN state will be in here.  This is the only
-	 * table where wildcard'd TCP sockets can exist.  Hash function here
-	 * is just local port number.
-	 */
-	struct inet_listen_hashbucket	listening_hash[INET_LHTABLE_SIZE]
-					____cacheline_aligned_in_smp;
+	/* The 2nd listener table hashed by local port and address */
+	unsigned int			lhash2_mask;
+	struct inet_listen_hashbucket	*lhash2;
 };
+
+static inline struct inet_listen_hashbucket *
+inet_lhash2_bucket(struct inet_hashinfo *h, u32 hash)
+{
+	return &h->lhash2[hash & h->lhash2_mask];
+}
 
 static inline struct inet_ehash_bucket *inet_ehash_bucket(
 	struct inet_hashinfo *hashinfo,
@@ -175,6 +163,12 @@ static inline spinlock_t *inet_ehash_lockp(
 
 int inet_ehash_locks_alloc(struct inet_hashinfo *hashinfo);
 
+static inline void inet_hashinfo2_free_mod(struct inet_hashinfo *h)
+{
+	kfree(h->lhash2);
+	h->lhash2 = NULL;
+}
+
 static inline void inet_ehash_locks_free(struct inet_hashinfo *hashinfo)
 {
 	kvfree(hashinfo->ehash_locks);
@@ -184,7 +178,7 @@ static inline void inet_ehash_locks_free(struct inet_hashinfo *hashinfo)
 struct inet_bind_bucket *
 inet_bind_bucket_create(struct kmem_cache *cachep, struct net *net,
 			struct inet_bind_hashbucket *head,
-			const unsigned short snum);
+			const unsigned short snum, int l3mdev);
 void inet_bind_bucket_destroy(struct kmem_cache *cachep,
 			      struct inet_bind_bucket *tb);
 
@@ -197,23 +191,16 @@ static inline u32 inet_bhashfn(const struct net *net, const __u16 lport,
 void inet_bind_hash(struct sock *sk, struct inet_bind_bucket *tb,
 		    const unsigned short snum);
 
-/* These can have wildcards, don't try too hard. */
-static inline u32 inet_lhashfn(const struct net *net, const unsigned short num)
-{
-	return (num + net_hash_mix(net)) & (INET_LHTABLE_SIZE - 1);
-}
-
-static inline int inet_sk_listen_hashfn(const struct sock *sk)
-{
-	return inet_lhashfn(sock_net(sk), inet_sk(sk)->inet_num);
-}
-
 /* Caller must disable local BH processing. */
 int __inet_inherit_port(const struct sock *sk, struct sock *child);
 
 void inet_put_port(struct sock *sk);
 
-void inet_hashinfo_init(struct inet_hashinfo *h);
+void inet_hashinfo2_init(struct inet_hashinfo *h, const char *name,
+			 unsigned long numentries, int scale,
+			 unsigned long low_limit,
+			 unsigned long high_limit);
+int inet_hashinfo2_init_mod(struct inet_hashinfo *h);
 
 bool inet_ehash_insert(struct sock *sk, struct sock *osk, bool *found_dup_sk);
 bool inet_ehash_nolisten(struct sock *sk, struct sock *osk,
@@ -257,7 +244,6 @@ static inline struct sock *inet_lookup_listener(struct net *net,
 	((__force __portpair)(((__u32)(__dport) << 16) | (__force __u32)(__be16)(__sport)))
 #endif
 
-#if (BITS_PER_LONG == 64)
 #ifdef __BIG_ENDIAN
 #define INET_ADDR_COOKIE(__name, __saddr, __daddr) \
 	const __addrpair __name = (__force __addrpair) ( \
@@ -269,26 +255,20 @@ static inline struct sock *inet_lookup_listener(struct net *net,
 				   (((__force __u64)(__be32)(__daddr)) << 32) | \
 				   ((__force __u64)(__be32)(__saddr)))
 #endif /* __BIG_ENDIAN */
-#define INET_MATCH(__sk, __net, __cookie, __saddr, __daddr, __ports, __dif, __sdif) \
-	(((__sk)->sk_portpair == (__ports))			&&	\
-	 ((__sk)->sk_addrpair == (__cookie))			&&	\
-	 (!(__sk)->sk_bound_dev_if	||				\
-	   ((__sk)->sk_bound_dev_if == (__dif))			||	\
-	   ((__sk)->sk_bound_dev_if == (__sdif)))		&&	\
-	 net_eq(sock_net(__sk), (__net)))
-#else /* 32-bit arch */
-#define INET_ADDR_COOKIE(__name, __saddr, __daddr) \
-	const int __name __deprecated __attribute__((unused))
 
-#define INET_MATCH(__sk, __net, __cookie, __saddr, __daddr, __ports, __dif, __sdif) \
-	(((__sk)->sk_portpair == (__ports))		&&		\
-	 ((__sk)->sk_daddr	== (__saddr))		&&		\
-	 ((__sk)->sk_rcv_saddr	== (__daddr))		&&		\
-	 (!(__sk)->sk_bound_dev_if	||				\
-	   ((__sk)->sk_bound_dev_if == (__dif))		||		\
-	   ((__sk)->sk_bound_dev_if == (__sdif)))	&&		\
-	 net_eq(sock_net(__sk), (__net)))
-#endif /* 64-bit arch */
+static inline bool INET_MATCH(struct net *net, const struct sock *sk,
+			      const __addrpair cookie, const __portpair ports,
+			      int dif, int sdif)
+{
+	if (!net_eq(sock_net(sk), net) ||
+	    sk->sk_portpair != ports ||
+	    sk->sk_addrpair != cookie)
+	        return false;
+
+	/* READ_ONCE() paired with WRITE_ONCE() in sock_bindtoindex_locked() */
+	return inet_sk_bound_dev_eq(net, READ_ONCE(sk->sk_bound_dev_if), dif,
+				    sdif);
+}
 
 /* Sockets in TCP_CLOSE state are _always_ taken out of the hash, so we need
  * not check it for lookups anymore, thanks Alexey. -DaveM
@@ -298,6 +278,20 @@ struct sock *__inet_lookup_established(struct net *net,
 				       const __be32 saddr, const __be16 sport,
 				       const __be32 daddr, const u16 hnum,
 				       const int dif, const int sdif);
+
+typedef u32 (inet_ehashfn_t)(const struct net *net,
+			      const __be32 laddr, const __u16 lport,
+			      const __be32 faddr, const __be16 fport);
+
+inet_ehashfn_t inet_ehashfn;
+
+INDIRECT_CALLABLE_DECLARE(inet_ehashfn_t udp_ehashfn);
+
+struct sock *inet_lookup_reuseport(struct net *net, struct sock *sk,
+				   struct sk_buff *skb, int doff,
+				   __be32 saddr, __be16 sport,
+				   __be32 daddr, unsigned short hnum,
+				   inet_ehashfn_t *ehashfn);
 
 static inline struct sock *
 	inet_lookup_established(struct net *net, struct inet_hashinfo *hashinfo,
@@ -356,10 +350,9 @@ static inline struct sock *__inet_lookup_skb(struct inet_hashinfo *hashinfo,
 					     const int sdif,
 					     bool *refcounted)
 {
-	struct sock *sk = skb_steal_sock(skb);
+	struct sock *sk = skb_steal_sock(skb, refcounted);
 	const struct iphdr *iph = ip_hdr(skb);
 
-	*refcounted = true;
 	if (sk)
 		return sk;
 
@@ -368,10 +361,6 @@ static inline struct sock *__inet_lookup_skb(struct inet_hashinfo *hashinfo,
 			     iph->daddr, dport, inet_iif(skb), sdif,
 			     refcounted);
 }
-
-u32 inet6_ehashfn(const struct net *net,
-		  const struct in6_addr *laddr, const u16 lport,
-		  const struct in6_addr *faddr, const __be16 fport);
 
 static inline void sk_daddr_set(struct sock *sk, __be32 addr)
 {

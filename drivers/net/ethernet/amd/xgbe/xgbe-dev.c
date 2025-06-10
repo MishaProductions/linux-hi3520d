@@ -119,6 +119,7 @@
 #include <linux/clk.h>
 #include <linux/bitrev.h>
 #include <linux/crc32.h>
+#include <linux/crc32poly.h>
 
 #include "xgbe.h"
 #include "xgbe-common.h"
@@ -317,6 +318,18 @@ static void xgbe_config_sph_mode(struct xgbe_prv_data *pdata)
 	}
 
 	XGMAC_IOWRITE_BITS(pdata, MAC_RCR, HDSMS, XGBE_SPH_HDSMS_SIZE);
+}
+
+static void xgbe_disable_sph_mode(struct xgbe_prv_data *pdata)
+{
+	unsigned int i;
+
+	for (i = 0; i < pdata->channel_count; i++) {
+		if (!pdata->channel[i]->rx_ring)
+			break;
+
+		XGMAC_DMA_IOWRITE_BITS(pdata->channel[i], DMA_CH_CR, SPH, 0);
+	}
 }
 
 static int xgbe_write_rss_reg(struct xgbe_prv_data *pdata, unsigned int type,
@@ -894,7 +907,6 @@ static int xgbe_disable_rx_vlan_filtering(struct xgbe_prv_data *pdata)
 
 static u32 xgbe_vid_crc32_le(__le16 vid_le)
 {
-	u32 poly = 0xedb88320;	/* CRCPOLY_LE */
 	u32 crc = ~0;
 	u32 temp = 0;
 	unsigned char *data = (unsigned char *)&vid_le;
@@ -911,7 +923,7 @@ static u32 xgbe_vid_crc32_le(__le16 vid_le)
 		data_byte >>= 1;
 
 		if (temp)
-			crc ^= poly;
+			crc ^= CRC32_POLY_LE;
 	}
 
 	return crc;
@@ -1087,7 +1099,7 @@ static int xgbe_add_mac_addresses(struct xgbe_prv_data *pdata)
 	return 0;
 }
 
-static int xgbe_set_mac_address(struct xgbe_prv_data *pdata, u8 *addr)
+static int xgbe_set_mac_address(struct xgbe_prv_data *pdata, const u8 *addr)
 {
 	unsigned int mac_addr_hi, mac_addr_lo;
 
@@ -1894,7 +1906,7 @@ static void xgbe_dev_xmit(struct xgbe_channel *channel)
 	smp_wmb();
 
 	ring->cur = cur_index + 1;
-	if (!packet->skb->xmit_more ||
+	if (!netdev_xmit_more() ||
 	    netif_xmit_stopped(netdev_get_tx_queue(pdata->netdev,
 						   channel->queue_index)))
 		xgbe_tx_start_xmit(channel, ring);
@@ -3495,8 +3507,12 @@ static int xgbe_init(struct xgbe_prv_data *pdata)
 	xgbe_config_tx_coalesce(pdata);
 	xgbe_config_rx_buffer_size(pdata);
 	xgbe_config_tso_mode(pdata);
-	xgbe_config_sph_mode(pdata);
-	xgbe_config_rss(pdata);
+
+	if (pdata->netdev->features & NETIF_F_RXCSUM) {
+		xgbe_config_sph_mode(pdata);
+		xgbe_config_rss(pdata);
+	}
+
 	desc_if->wrapper_tx_desc_init(pdata);
 	desc_if->wrapper_rx_desc_init(pdata);
 	xgbe_enable_dma_interrupts(pdata);
@@ -3649,6 +3665,10 @@ void xgbe_init_function_ptrs_dev(struct xgbe_hw_if *hw_if)
 	hw_if->enable_vxlan = xgbe_enable_vxlan;
 	hw_if->disable_vxlan = xgbe_disable_vxlan;
 	hw_if->set_vxlan_id = xgbe_set_vxlan_id;
+
+	/* For Split Header*/
+	hw_if->enable_sph = xgbe_config_sph_mode;
+	hw_if->disable_sph = xgbe_disable_sph_mode;
 
 	DBGPR("<--xgbe_init_function_ptrs\n");
 }

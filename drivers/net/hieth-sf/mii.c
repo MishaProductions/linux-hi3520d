@@ -56,7 +56,7 @@ int hieth_mdiobus_driver_init(struct platform_device *pdev)
 	int phy, ret = 0;
 	struct hieth_mdio_local *ld = &hieth_mdio_local_device;
 
-	ld->iobase = (unsigned long)ioremap_nocache(
+	ld->iobase = (unsigned long)ioremap(
 			CONFIG_HIETH_IOBASE, CONFIG_HIETH_IOSIZE);
 	if (!ld->iobase) {
 		hieth_error("ioremap_nocache err, base=0x%.8x, size=0x%.8x\n",

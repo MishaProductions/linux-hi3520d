@@ -1,0 +1,3 @@
+kernel/drivers/mtd/devices/hisfc350/spi_ids.ko
+kernel/drivers/mtd/devices/hisfc350/hisfc350_spi_ids.ko
+kernel/drivers/mtd/devices/hisfc350/hisfc350.ko

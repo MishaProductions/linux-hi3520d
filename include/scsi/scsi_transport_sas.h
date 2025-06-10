@@ -156,6 +156,7 @@ struct sas_port {
 
 	struct mutex		phy_list_mutex;
 	struct list_head	phy_list;
+	struct list_head	del_list; /* libsas only */
 };
 
 #define dev_to_sas_port(d) \
@@ -197,6 +198,8 @@ unsigned int sas_tlr_supported(struct scsi_device *);
 unsigned int sas_is_tlr_enabled(struct scsi_device *);
 void sas_disable_tlr(struct scsi_device *);
 void sas_enable_tlr(struct scsi_device *);
+
+bool sas_ata_ncq_prio_supported(struct scsi_device *sdev);
 
 extern struct sas_rphy *sas_end_device_alloc(struct sas_port *);
 extern struct sas_rphy *sas_expander_alloc(struct sas_port *, enum sas_device_type);

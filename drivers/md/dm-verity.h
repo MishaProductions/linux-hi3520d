@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2012 Red Hat, Inc.
  * Copyright (C) 2015 Google, Inc.
@@ -5,14 +6,12 @@
  * Author: Mikulas Patocka <mpatocka@redhat.com>
  *
  * Based on Chromium dm-verity driver (C) 2011 The Chromium OS Authors
- *
- * This file is released under the GPLv2.
  */
 
 #ifndef DM_VERITY_H
 #define DM_VERITY_H
 
-#include "dm-bufio.h"
+#include <linux/dm-bufio.h>
 #include <linux/device-mapper.h>
 #include <crypto/hash.h>
 
@@ -21,7 +20,8 @@
 enum verity_mode {
 	DM_VERITY_MODE_EIO,
 	DM_VERITY_MODE_LOGGING,
-	DM_VERITY_MODE_RESTART
+	DM_VERITY_MODE_RESTART,
+	DM_VERITY_MODE_PANIC
 };
 
 enum verity_block_type {
@@ -63,6 +63,9 @@ struct dm_verity {
 	sector_t hash_level_block[DM_VERITY_MAX_LEVELS];
 
 	struct dm_verity_fec *fec;	/* forward error correction */
+	unsigned long *validated_blocks; /* bitset blocks validated */
+
+	char *signature_key_desc; /* signature keyring reference */
 };
 
 struct dm_verity_io {
@@ -71,10 +74,10 @@ struct dm_verity_io {
 	/* original value of bio->bi_end_io */
 	bio_end_io_t *orig_bi_end_io;
 
+	struct bvec_iter iter;
+
 	sector_t block;
 	unsigned n_blocks;
-
-	struct bvec_iter iter;
 
 	struct work_struct work;
 
@@ -88,11 +91,6 @@ struct dm_verity_io {
 	 * To access them use: verity_io_hash_req(), verity_io_real_digest()
 	 * and verity_io_want_digest().
 	 */
-};
-
-struct verity_result {
-	struct completion completion;
-	int err;
 };
 
 static inline struct ahash_request *verity_io_hash_req(struct dm_verity *v,
@@ -111,12 +109,6 @@ static inline u8 *verity_io_want_digest(struct dm_verity *v,
 					struct dm_verity_io *io)
 {
 	return (u8 *)(io + 1) + v->ahash_reqsize + v->digest_size;
-}
-
-static inline u8 *verity_io_digest_end(struct dm_verity *v,
-				       struct dm_verity_io *io)
-{
-	return verity_io_want_digest(v, io) + v->digest_size;
 }
 
 extern int verity_for_bv_block(struct dm_verity *v, struct dm_verity_io *io,

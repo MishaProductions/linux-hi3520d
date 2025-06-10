@@ -1,5 +1,9 @@
+.. raw:: latex
+
+	\kerneldocCJKoff
+
 NOTE:
-This is a version of Documentation/HOWTO translated into Japanese.
+This is a version of Documentation/process/howto.rst translated into Japanese.
 This document is maintained by Tsugikazu Shibata <tshibata@ab.jp.nec.com>
 If you find any difference between this document and the original file or
 a problem with the translation, please contact the maintainer of this file.
@@ -10,6 +14,10 @@ a fork. So if you have any comments or updates for this file, please
 try to update the original English file first.
 
 ----------------------------------
+
+.. raw:: latex
+
+	\kerneldocCJKon
 
 この文書は、
 Documentation/process/howto.rst
@@ -57,7 +65,7 @@ Linux カーネル開発のやり方
  - 『新・詳説 C 言語 H&S リファレンス』 (サミュエル P ハービソン/ガイ L スティール共著 斉藤 信男監訳)[ソフトバンク]
 
 カーネルは GNU C と GNU ツールチェインを使って書かれています。カーネル
-は ISO C89 仕様に準拠して書く一方で、標準には無い言語拡張を多く使って
+は ISO C11 仕様に準拠して書く一方で、標準には無い言語拡張を多く使って
 います。カーネルは標準 C ライブラリに依存しない、C 言語非依存環境です。
 そのため、C の標準の中で使えないものもあります。特に任意の long long
 の除算や浮動小数点は使えません。カーネルがツールチェインや C 言語拡張
@@ -109,7 +117,7 @@ linux-api@vger.kernel.org に送ることを勧めます。
     ています。 カーネルに関して初めての人はここからスタートすると良い
     でしょう。
 
-  :ref:`Documentation/Process/changes.rst <changes>`
+  :ref:`Documentation/process/changes.rst <changes>`
     このファイルはカーネルをうまく生成(訳注 build )し、走らせるのに最
     小限のレベルで必要な数々のソフトウェアパッケージの一覧を示してい
     ます。
@@ -139,7 +147,7 @@ linux-api@vger.kernel.org に送ることを勧めます。
        "The Perfect Patch"
 		http://www.ozlabs.org/~akpm/stuff/tpp.txt
        "Linux kernel patch submission format"
-		http://linux.yyz.us/patch-format.html
+		https://web.archive.org/web/20180829112450/http://linux.yyz.us/patch-format.html
 
   :ref:`Documentation/process/stable-api-nonsense.rst <stable_api_nonsense>`
     このファイルはカーネルの中に不変の API を持たないことにした意識的
@@ -245,7 +253,7 @@ Linux カーネルソースツリーの中に含まれる、きれいにし、�
 できます。この最新の素晴しいカーネルコードのリポジトリは以下で見つかり
 ます -
 
-	http://lxr.free-electrons.com/
+	https://elixir.bootlin.com/
 
 開発プロセス
 ------------
@@ -256,7 +264,6 @@ Linux カーネルの開発プロセスは現在幾つかの異なるメイン�
 
   - メインの 4.x カーネルツリー
   - 4.x.y -stable カーネルツリー
-  - 4.x -git カーネルパッチ
   - サブシステム毎のカーネルツリーとパッチ
   - 統合テストのための 4.x -next カーネルツリー
 
@@ -318,15 +325,6 @@ Andrew Morton が Linux-kernel メーリングリストにカーネルリリー�
 Documentation/process/stable-kernel-rules.rst ファイルにはどのような種
 類の変更が -stable ツリーに受け入れ可能か、またリリースプロセスがどう
 動くかが記述されています。
-
-4.x -git パッチ
-~~~~~~~~~~~~~~~
-
-git リポジトリで管理されているLinus のカーネルツリーの毎日のスナップ
-ショットがあります。(だから -git という名前がついています)。これらのパッ
-チはおおむね毎日リリースされており、Linus のツリーの現状を表します。こ
-れは -rc カーネルと比べて、パッチが大丈夫かどうかも確認しないで自動的
-に生成されるので、より実験的です。
 
 サブシステム毎のカーネルツリーとパッチ
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

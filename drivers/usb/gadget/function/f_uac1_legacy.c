@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * f_audio.c -- USB Audio class function driver
   *
  * Copyright (C) 2008 Bryan Wu <cooloney@kernel.org>
  * Copyright (C) 2008 Analog Devices, Inc
- *
- * Enter bugs at http://blackfin.uclinux.org/
- *
- * Licensed under the GPL-2 or later.
  */
 
 #include <linux/slab.h>
@@ -57,8 +54,8 @@ static struct uac1_ac_header_descriptor_1 ac_header_desc = {
 	.bLength =		UAC_DT_AC_HEADER_LENGTH,
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
 	.bDescriptorSubtype =	UAC_HEADER,
-	.bcdADC =		__constant_cpu_to_le16(0x0100),
-	.wTotalLength =		__constant_cpu_to_le16(UAC_DT_TOTAL_LENGTH),
+	.bcdADC =		cpu_to_le16(0x0100),
+	.wTotalLength =		cpu_to_le16(UAC_DT_TOTAL_LENGTH),
 	.bInCollection =	F_AUDIO_NUM_INTERFACES,
 	.baInterfaceNr = {
 	/* Interface number of the first AudioStream interface */
@@ -186,7 +183,7 @@ static struct uac_iso_endpoint_descriptor as_iso_out_desc = {
 	.bDescriptorSubtype =	UAC_EP_GENERAL,
 	.bmAttributes = 	1,
 	.bLockDelayUnits =	1,
-	.wLockDelay =		__constant_cpu_to_le16(1),
+	.wLockDelay =		cpu_to_le16(1),
 };
 
 static struct usb_descriptor_header *f_audio_desc[] = {
@@ -757,8 +754,6 @@ f_audio_bind(struct usb_configuration *c, struct usb_function *f)
 	audio->out_ep = ep;
 	audio->out_ep->desc = &as_out_ep_desc;
 
-	status = -ENOMEM;
-
 	/* copy descriptors, and track endpoint copies */
 	status = usb_assign_descriptors(f, f_audio_desc, f_audio_desc, NULL,
 					NULL);
@@ -923,7 +918,7 @@ static struct configfs_attribute *f_uac1_attrs[] = {
 	NULL,
 };
 
-static struct config_item_type f_uac1_func_type = {
+static const struct config_item_type f_uac1_func_type = {
 	.ct_item_ops	= &f_uac1_item_ops,
 	.ct_attrs	= f_uac1_attrs,
 	.ct_owner	= THIS_MODULE,

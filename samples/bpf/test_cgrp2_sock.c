@@ -21,8 +21,9 @@
 #include <net/if.h>
 #include <inttypes.h>
 #include <linux/bpf.h>
+#include <bpf/bpf.h>
 
-#include "libbpf.h"
+#include "bpf_insn.h"
 
 char bpf_log_buf[BPF_LOG_BUF_SIZE];
 
@@ -173,8 +174,10 @@ static int show_sockopts(int family)
 		return 1;
 	}
 
-	if (get_bind_to_device(sd, name, sizeof(name)) < 0)
+	if (get_bind_to_device(sd, name, sizeof(name)) < 0) {
+		close(sd);
 		return 1;
+	}
 
 	mark = get_somark(sd);
 	prio = get_priority(sd);

@@ -105,10 +105,17 @@ static void xs_suspend_enter(void)
 
 static void xs_suspend_exit(void)
 {
+	xb_dev_generation_id++;
 	spin_lock(&xs_state_lock);
 	xs_suspend_active--;
 	spin_unlock(&xs_state_lock);
 	wake_up_all(&xs_state_enter_wq);
+}
+
+void xs_free_req(struct kref *kref)
+{
+	struct xb_req_data *req = container_of(kref, struct xb_req_data, kref);
+	kfree(req);
 }
 
 static uint32_t xs_request_enter(struct xb_req_data *req)
@@ -125,7 +132,7 @@ static uint32_t xs_request_enter(struct xb_req_data *req)
 		spin_lock(&xs_state_lock);
 	}
 
-	if (req->type == XS_TRANSACTION_START)
+	if (req->type == XS_TRANSACTION_START && !req->user_req)
 		xs_state_users++;
 	xs_state_users++;
 	rq_id = xs_request_id++;
@@ -140,7 +147,9 @@ void xs_request_exit(struct xb_req_data *req)
 	spin_lock(&xs_state_lock);
 	xs_state_users--;
 	if ((req->type == XS_TRANSACTION_START && req->msg.type == XS_ERROR) ||
-	    req->type == XS_TRANSACTION_END)
+	    (req->type == XS_TRANSACTION_END && !req->user_req &&
+	     !WARN_ON_ONCE(req->msg.type == XS_ERROR &&
+			   !strcmp(req->body, "ENOENT"))))
 		xs_state_users--;
 	spin_unlock(&xs_state_lock);
 
@@ -234,6 +243,12 @@ static void xs_send(struct xb_req_data *req, struct xsd_sockmsg *msg)
 	req->caller_req_id = req->msg.req_id;
 	req->msg.req_id = xs_request_enter(req);
 
+	/*
+	 * Take 2nd ref.  One for this thread, and the second for the
+	 * xenbus_thread.
+	 */
+	kref_get(&req->kref);
+
 	mutex_lock(&xb_write_mutex);
 	list_add_tail(&req->list, &xb_write_list);
 	notify = list_is_singular(&xb_write_list);
@@ -258,8 +273,8 @@ static void *xs_wait_for_reply(struct xb_req_data *req, struct xsd_sockmsg *msg)
 	if (req->state == xb_req_state_queued ||
 	    req->state == xb_req_state_wait_reply)
 		req->state = xb_req_state_aborted;
-	else
-		kfree(req);
+
+	kref_put(&req->kref, xs_free_req);
 	mutex_unlock(&xb_write_mutex);
 
 	return ret;
@@ -287,6 +302,8 @@ int xenbus_dev_request_and_reply(struct xsd_sockmsg *msg, void *par)
 	req->num_vecs = 1;
 	req->cb = xenbus_dev_queue_reply;
 	req->par = par;
+	req->user_req = true;
+	kref_init(&req->kref);
 
 	xs_send(req, msg);
 
@@ -314,6 +331,8 @@ static void *xs_talkv(struct xenbus_transaction t,
 	req->vec = iovec;
 	req->num_vecs = num_vecs;
 	req->cb = xs_wake_up;
+	req->user_req = false;
+	kref_init(&req->kref);
 
 	msg.req_id = 0;
 	msg.tx_id = t.id;

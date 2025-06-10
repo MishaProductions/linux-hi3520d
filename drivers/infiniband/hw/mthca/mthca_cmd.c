@@ -292,12 +292,6 @@ static int mthca_cmd_post(struct mthca_dev *dev,
 		err = mthca_cmd_post_hcr(dev, in_param, out_param, in_modifier,
 					 op_modifier, op, token, event);
 
-	/*
-	 * Make sure that our HCR writes don't get mixed in with
-	 * writes from another CPU starting a FW command.
-	 */
-	mmiowb();
-
 	mutex_unlock(&dev->cmd.hcr_mutex);
 	return err;
 }
@@ -565,9 +559,9 @@ int mthca_cmd_use_events(struct mthca_dev *dev)
 {
 	int i;
 
-	dev->cmd.context = kmalloc(dev->cmd.max_cmds *
-				   sizeof (struct mthca_cmd_context),
-				   GFP_KERNEL);
+	dev->cmd.context = kmalloc_array(dev->cmd.max_cmds,
+					 sizeof(struct mthca_cmd_context),
+					 GFP_KERNEL);
 	if (!dev->cmd.context)
 		return -ENOMEM;
 
@@ -641,7 +635,7 @@ void mthca_free_mailbox(struct mthca_dev *dev, struct mthca_mailbox *mailbox)
 
 int mthca_SYS_EN(struct mthca_dev *dev)
 {
-	u64 out;
+	u64 out = 0;
 	int ret;
 
 	ret = mthca_cmd_imm(dev, 0, &out, 0, 0, CMD_SYS_EN, CMD_TIME_CLASS_D);
@@ -1961,7 +1955,7 @@ int mthca_WRITE_MGM(struct mthca_dev *dev, int index,
 int mthca_MGID_HASH(struct mthca_dev *dev, struct mthca_mailbox *mailbox,
 		    u16 *hash)
 {
-	u64 imm;
+	u64 imm = 0;
 	int err;
 
 	err = mthca_cmd_imm(dev, mailbox->dma, &imm, 0, 0, CMD_MGID_HASH,

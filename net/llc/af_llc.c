@@ -47,7 +47,7 @@ static int llc_ui_wait_for_busy_core(struct sock *sk, long timeout);
 #if 0
 #define dprintk(args...) printk(KERN_DEBUG args)
 #else
-#define dprintk(args...)
+#define dprintk(args...) do {} while (0)
 #endif
 
 /* Maybe we'll add some more in the future. */
@@ -224,9 +224,10 @@ static int llc_ui_release(struct socket *sock)
 	} else {
 		release_sock(sk);
 	}
-	if (llc->dev)
-		dev_put(llc->dev);
+	dev_put(llc->dev);
 	sock_put(sk);
+	sock_orphan(sk);
+	sock->sk = NULL;
 	llc_sk_free(sk);
 out:
 	return 0;
@@ -344,8 +345,6 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	struct llc_sap *sap;
 	int rc = -EINVAL;
 
-	dprintk("%s: binding %02X\n", __func__, addr->sllc_sap);
-
 	lock_sock(sk);
 	if (unlikely(!sock_flag(sk, SOCK_ZAPPED) || addrlen != sizeof(*addr)))
 		goto out;
@@ -354,6 +353,7 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		addr->sllc_arphrd = ARPHRD_ETHER;
 	if (unlikely(addr->sllc_family != AF_LLC || addr->sllc_arphrd != ARPHRD_ETHER))
 		goto out;
+	dprintk("%s: binding %02X\n", __func__, addr->sllc_sap);
 	rc = -ENODEV;
 	rcu_read_lock();
 	if (sk->sk_bound_dev_if) {
@@ -373,11 +373,11 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		dev = dev_getbyhwaddr_rcu(&init_net, addr->sllc_arphrd,
 					   addr->sllc_mac);
 	}
-	if (dev)
-		dev_hold(dev);
+	dev_hold(dev);
 	rcu_read_unlock();
 	if (!dev)
 		goto out;
+
 	if (!addr->sllc_sap) {
 		rc = -EUSERS;
 		addr->sllc_sap = llc_ui_autoport();
@@ -583,7 +583,8 @@ static int llc_ui_wait_for_disc(struct sock *sk, long timeout)
 
 	add_wait_queue(sk_sleep(sk), &wait);
 	while (1) {
-		if (sk_wait_event(sk, &timeout, sk->sk_state == TCP_CLOSE, &wait))
+		if (sk_wait_event(sk, &timeout,
+				  READ_ONCE(sk->sk_state) == TCP_CLOSE, &wait))
 			break;
 		rc = -ERESTARTSYS;
 		if (signal_pending(current))
@@ -603,7 +604,8 @@ static bool llc_ui_wait_for_conn(struct sock *sk, long timeout)
 
 	add_wait_queue(sk_sleep(sk), &wait);
 	while (1) {
-		if (sk_wait_event(sk, &timeout, sk->sk_state != TCP_SYN_SENT, &wait))
+		if (sk_wait_event(sk, &timeout,
+				  READ_ONCE(sk->sk_state) != TCP_SYN_SENT, &wait))
 			break;
 		if (signal_pending(current) || !timeout)
 			break;
@@ -622,7 +624,7 @@ static int llc_ui_wait_for_busy_core(struct sock *sk, long timeout)
 	while (1) {
 		rc = 0;
 		if (sk_wait_event(sk, &timeout,
-				  (sk->sk_shutdown & RCV_SHUTDOWN) ||
+				  (READ_ONCE(sk->sk_shutdown) & RCV_SHUTDOWN) ||
 				  (!llc_data_accept_state(llc->state) &&
 				   !llc->remote_busy_flag &&
 				   !llc->p_flag), &wait))
@@ -733,7 +735,7 @@ static int llc_ui_accept(struct socket *sock, struct socket *newsock, int flags,
 
 	/* put original socket back into a clean listen state. */
 	sk->sk_state = TCP_LISTEN;
-	sk->sk_ack_backlog--;
+	sk_acceptq_removed(sk);
 	dprintk("%s: ok success on %02X, client on %02X\n", __func__,
 		llc_sk(sk)->addr.sllc_sap, newllc->daddr.lsap);
 frees:
@@ -808,7 +810,7 @@ static int llc_ui_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		}
 		/* Well, if we have backlog, try to process it now yet. */
 
-		if (copied >= target && !sk->sk_backlog.tail)
+		if (copied >= target && !READ_ONCE(sk->sk_backlog.tail))
 			break;
 
 		if (copied) {
@@ -884,15 +886,15 @@ static int llc_ui_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		if (sk->sk_type != SOCK_STREAM)
 			goto copy_uaddr;
 
+		/* Partial read */
+		if (used + offset < skb_len)
+			continue;
+
 		if (!(flags & MSG_PEEK)) {
 			skb_unlink(skb, &sk->sk_receive_queue);
 			kfree_skb(skb);
 			*seq = 0;
 		}
-
-		/* Partial read */
-		if (used + offset < skb_len)
-			continue;
 	} while (len > 0);
 
 out:
@@ -926,14 +928,15 @@ copy_uaddr:
  */
 static int llc_ui_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 {
+	DECLARE_SOCKADDR(struct sockaddr_llc *, addr, msg->msg_name);
 	struct sock *sk = sock->sk;
 	struct llc_sock *llc = llc_sk(sk);
-	DECLARE_SOCKADDR(struct sockaddr_llc *, addr, msg->msg_name);
 	int flags = msg->msg_flags;
 	int noblock = flags & MSG_DONTWAIT;
+	int rc = -EINVAL, copied = 0, hdrlen, hh_len;
 	struct sk_buff *skb = NULL;
+	struct net_device *dev;
 	size_t size = 0;
-	int rc = -EINVAL, copied = 0, hdrlen;
 
 	dprintk("%s: sending from %02X to %02X\n", __func__,
 		llc->laddr.lsap, llc->daddr.lsap);
@@ -953,22 +956,29 @@ static int llc_ui_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 		if (rc)
 			goto out;
 	}
-	hdrlen = llc->dev->hard_header_len + llc_ui_header_len(sk, addr);
+	dev = llc->dev;
+	hh_len = LL_RESERVED_SPACE(dev);
+	hdrlen = llc_ui_header_len(sk, addr);
 	size = hdrlen + len;
-	if (size > llc->dev->mtu)
-		size = llc->dev->mtu;
+	size = min_t(size_t, size, READ_ONCE(dev->mtu));
 	copied = size - hdrlen;
 	rc = -EINVAL;
 	if (copied < 0)
 		goto out;
 	release_sock(sk);
-	skb = sock_alloc_send_skb(sk, size, noblock, &rc);
+	skb = sock_alloc_send_skb(sk, hh_len + size, noblock, &rc);
 	lock_sock(sk);
 	if (!skb)
 		goto out;
-	skb->dev      = llc->dev;
+	if (sock_flag(sk, SOCK_ZAPPED) ||
+	    llc->dev != dev ||
+	    hdrlen != llc_ui_header_len(sk, addr) ||
+	    hh_len != LL_RESERVED_SPACE(dev) ||
+	    size > READ_ONCE(dev->mtu))
+		goto out;
+	skb->dev      = dev;
 	skb->protocol = llc_proto_type(addr->sllc_arphrd);
-	skb_reserve(skb, hdrlen);
+	skb_reserve(skb, hh_len + hdrlen);
 	rc = memcpy_from_msg(skb_put(skb, copied), msg, copied);
 	if (rc)
 		goto out;
@@ -1008,13 +1018,12 @@ out:
  *	llc_ui_getname - return the address info of a socket
  *	@sock: Socket to get address of.
  *	@uaddr: Address structure to return information.
- *	@uaddrlen: Length of address structure.
  *	@peer: Does user want local or remote address information.
  *
  *	Return the address information of a socket.
  */
 static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
-			  int *uaddrlen, int peer)
+			  int peer)
 {
 	struct sockaddr_llc sllc;
 	struct sock *sk = sock->sk;
@@ -1025,7 +1034,6 @@ static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
 	lock_sock(sk);
 	if (sock_flag(sk, SOCK_ZAPPED))
 		goto out;
-	*uaddrlen = sizeof(sllc);
 	if (peer) {
 		rc = -ENOTCONN;
 		if (sk->sk_state != TCP_ESTABLISHED)
@@ -1046,9 +1054,9 @@ static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
 			       IFHWADDRLEN);
 		}
 	}
-	rc = 0;
 	sllc.sllc_family = AF_LLC;
 	memcpy(uaddr, &sllc, sizeof(sllc));
+	rc = sizeof(sllc);
 out:
 	release_sock(sk);
 	return rc;
@@ -1079,7 +1087,7 @@ static int llc_ui_ioctl(struct socket *sock, unsigned int cmd,
  *	Set various connection specific parameters.
  */
 static int llc_ui_setsockopt(struct socket *sock, int level, int optname,
-			     char __user *optval, unsigned int optlen)
+			     sockptr_t optval, unsigned int optlen)
 {
 	struct sock *sk = sock->sk;
 	struct llc_sock *llc = llc_sk(sk);
@@ -1089,7 +1097,7 @@ static int llc_ui_setsockopt(struct socket *sock, int level, int optname,
 	lock_sock(sk);
 	if (unlikely(level != SOL_LLC || optlen != sizeof(int)))
 		goto out;
-	rc = get_user(opt, (int __user *)optval);
+	rc = copy_from_sockptr(&opt, optval, sizeof(opt));
 	if (rc)
 		goto out;
 	rc = -EINVAL;

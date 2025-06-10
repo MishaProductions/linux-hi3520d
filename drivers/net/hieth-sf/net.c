@@ -318,12 +318,14 @@ static int hieth_net_open(struct net_device *dev)
 	hieth_writel_bits(ld, 1, GLB_RW_IRQ_ENA, UD_BIT_NAME(BITS_IRQS_ENA));
 	hieth_writel_bits(ld, 1, GLB_RW_IRQ_ENA, BITS_IRQS_ENA_ALLPORT);
 
-	init_timer(&ld->monitor);
+	/*init_timer(&ld->monitor);
 	ld->monitor.function = hieth_monitor_func;
 	ld->monitor.data = (unsigned long)dev;
 	ld->monitor.expires = jiffies
 		+ msecs_to_jiffies(CONFIG_HIETH_MONITOR_TIMER);
-	add_timer(&ld->monitor);
+	add_timer(&ld->monitor);*/
+
+	//timer_setup(&ld->monitor, hieth_monitor_func, 0)
 
 	data = readl((void*)(ld->iobase + 0x210));
 	data |= 0x40000000;	/* do CRC check in mac*/
@@ -402,7 +404,7 @@ static int hieth_net_close(struct net_device *dev)
 	return 0;
 }
 
-static void hieth_net_timeout(struct net_device *dev)
+static void hieth_net_timeout(struct net_device *dev, unsigned int timeout)
 {
 	hieth_error("tx timeout");
 }
@@ -523,36 +525,9 @@ static u32 hieth_ethtools_get_link(struct net_device *net_dev)
 	return ret;
 }
 
-static int hieth_ethtools_get_settings(struct net_device *net_dev, \
-		struct ethtool_cmd *cmd)
-{
-	struct hieth_netdev_local *ld = netdev_priv(net_dev);
-
-	//if (ld->phy)
-	//	return phy_ethtool_gset(ld->phy, cmd);
-
-	return -EINVAL;
-}
-
-static int hieth_ethtools_set_settings(struct net_device *net_dev, \
-		struct ethtool_cmd *cmd)
-{
-	struct hieth_netdev_local *ld = netdev_priv(net_dev);
-
-	if (!capable(CAP_NET_ADMIN))
-		return -EPERM;
-
-	if (ld->phy)
-		return phy_ethtool_sset(ld->phy, cmd);
-
-	return -EINVAL;
-}
-
 static struct ethtool_ops hieth_ethtools_ops = {
 	.get_drvinfo		= hieth_ethtools_get_drvinfo,
-	.get_link		= hieth_ethtools_get_link,
-	.get_settings		= hieth_ethtools_get_settings,
-	.set_settings		= hieth_ethtools_set_settings,
+	.get_link		= hieth_ethtools_get_link
 };
 
 static const struct net_device_ops hieth_netdev_ops = {
@@ -598,7 +573,7 @@ static int hieth_platdev_probe_port(struct platform_device *pdev, int port)
 
 	local_lock_init(ld);
 
-	ld->iobase = (unsigned long)ioremap_nocache(CONFIG_HIETH_IOBASE, \
+	ld->iobase = (unsigned long)ioremap(CONFIG_HIETH_IOBASE, \
 					CONFIG_HIETH_IOSIZE);
 	if (!ld->iobase) {
 		hieth_error("ioremap_nocache err, base=0x%.8x, size=0x%.8x\n",

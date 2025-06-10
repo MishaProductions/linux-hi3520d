@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * DA9150 Fuel-Gauge Driver
  *
  * Copyright (c) 2015 Dialog Semiconductor
  *
  * Author: Adam Thomson <Adam.Thomson.Opensource@diasemi.com>
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  */
 
 #include <linux/kernel.h>
@@ -92,7 +88,7 @@ struct da9150_fg {
 static u32 da9150_fg_read_attr(struct da9150_fg *fg, u8 code, u8 size)
 
 {
-	u8 buf[size];
+	u8 buf[DA9150_QIF_LONG_SIZE];
 	u8 read_addr;
 	u32 res = 0;
 	int i;
@@ -111,7 +107,7 @@ static void da9150_fg_write_attr(struct da9150_fg *fg, u8 code, u8 size,
 				 u32 val)
 
 {
-	u8 buf[size];
+	u8 buf[DA9150_QIF_LONG_SIZE];
 	u8 write_addr;
 	int i;
 
@@ -251,9 +247,9 @@ static int da9150_fg_current_avg(struct da9150_fg *fg,
 				      DA9150_QIF_SD_GAIN_SIZE);
 	da9150_fg_read_sync_end(fg);
 
-	div = (u64) (sd_gain * shunt_val * 65536ULL);
+	div = 65536ULL * sd_gain * shunt_val;
 	do_div(div, 1000000);
-	res = (u64) (iavg * 1000000ULL);
+	res = 1000000ULL * iavg;
 	do_div(res, div);
 
 	val->intval = (int) res;

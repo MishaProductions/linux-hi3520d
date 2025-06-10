@@ -26,7 +26,7 @@
 #include <mach/hardware.h>
 #include <mach/early-debug.h>
 #include <mach/irqs.h>
-#include <linux/bootmem.h>
+//#include <linux/bootmem.h>
 #include <linux/of_platform.h>
 #include <asm/setup.h>
 
